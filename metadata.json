@@ -1,0 +1,7 @@
+{
+  "name": "CareMol Lab Assistant",
+  "description": "WhatsApp-integrated platform for booking lab tests and managing sample collections.",
+  "requestFramePermissions": [
+    "geolocation"
+  ]
+}

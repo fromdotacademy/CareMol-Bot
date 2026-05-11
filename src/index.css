@@ -1,0 +1,20 @@
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;900&family=Noto+Sans+Malayalam:wght@400;700&display=swap');
+@import "tailwindcss";
+
+@theme {
+  --color-primary: #0D9488;
+  --color-whatsapp: #25D366;
+  --color-bg-app: #F1F5F9;
+  --color-text-dark: #1E293B;
+  --color-text-muted: #64748B;
+  --color-border-subtle: #E2E8F0;
+  
+  --font-sans: "Inter", "Noto Sans Malayalam", -apple-system, sans-serif;
+  
+  --radius-xl-2: 24px;
+  --radius-xl-3: 40px;
+}
+
+body {
+  @apply bg-bg-app text-text-dark antialiased;
+}

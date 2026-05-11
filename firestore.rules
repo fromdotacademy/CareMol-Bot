@@ -1,0 +1,61 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    function isSignedIn() { return request.auth != null; }
+    function isEmailVerified() { return isSignedIn() && request.auth.token.email_verified == true; }
+    function isAdmin() {
+      return isSignedIn() && (
+        request.auth.token.email == "fromdotacademy@gmail.com" ||
+        request.auth.token.email == "tubejaf@gmail.com" ||
+        exists(/databases/$(database)/documents/admins/$(request.auth.uid))
+      );
+    }
+    function isOwner(userId) { return isSignedIn() && request.auth.uid == userId; }
+    function incoming() { return request.resource.data; }
+    function existing() { return resource.data; }
+
+    function isValidUser(data) {
+      return data.keys().hasAll(['userId']) && data.userId == request.auth.uid;
+    }
+
+    function isValidBooking(data) {
+      return data.keys().hasAll(['bookingId', 'userId', 'patientName', 'status', 'createdAt']) &&
+             data.userId == request.auth.uid &&
+             data.status in ['Created', 'Assigned', 'Collected', 'Processing', 'Completed'];
+    }
+
+    match /users/{userId} {
+      allow get: if isOwner(userId) || isAdmin();
+      allow list: if isAdmin();
+      allow create: if isOwner(userId) && isValidUser(incoming());
+      allow update: if (isOwner(userId) || isAdmin()) && (
+        (incoming().diff(existing()).affectedKeys().hasOnly(['name', 'language', 'phoneNumber', 'lastActive']) && isValidUser(incoming())) ||
+        (isAdmin() && incoming().diff(existing()).affectedKeys().hasOnly(['role']))
+      );
+
+      match /patients/{patientId} {
+        allow read, write: if isOwner(userId) || isAdmin();
+      }
+    }
+
+    match /bookings/{bookingId} {
+      allow list: if isAdmin() || (isSignedIn() && resource.data.userId == request.auth.uid);
+      allow get: if isAdmin() || (isSignedIn() && resource.data.userId == request.auth.uid);
+      allow create: if isSignedIn() && isValidBooking(incoming());
+      allow update: if (isAdmin() || (isSignedIn() && existing().userId == request.auth.uid)) && (
+        (existing().status == 'Created' && incoming().diff(existing()).affectedKeys().hasOnly(['patientName', 'patientAge', 'patientGender', 'patientAddress', 'patientPhone', 'testNames', 'timeSlot', 'isFastingConfirmed', 'price']) && isValidBooking(incoming())) ||
+        (isAdmin() && incoming().diff(existing()).affectedKeys().hasOnly(['status', 'price', 'assignedTo']))
+      );
+    }
+
+    match /notifications/{notificationId} {
+      allow read: if isSignedIn() && resource.data.userId == request.auth.uid;
+      allow write: if isAdmin();
+    }
+  }
+}

@@ -1,0 +1,70 @@
+{
+  "entities": {
+    "User": {
+      "title": "User",
+      "description": "WhatsApp user profile",
+      "type": "object",
+      "properties": {
+        "userId": { "type": "string" },
+        "language": { "type": "string", "enum": ["English", "Malayalam"] },
+        "phoneNumber": { "type": "string" },
+        "name": { "type": "string" },
+        "lastActive": { "type": "string", "format": "date-time" }
+      },
+      "required": ["userId", "phoneNumber"]
+    },
+    "Booking": {
+      "title": "Booking",
+      "description": "Lab test booking details",
+      "type": "object",
+      "properties": {
+        "bookingId": { "type": "string" },
+        "userId": { "type": "string" },
+        "patientName": { "type": "string" },
+        "patientAge": { "type": "number" },
+        "patientGender": { "type": "string", "enum": ["Male", "Female", "Other"] },
+        "patientPhone": { "type": "string" },
+        "patientAddress": { "type": "string" },
+        "testNames": { "type": "array", "items": { "type": "string" } },
+        "timeSlot": { "type": "string" },
+        "status": { "type": "string", "enum": ["Created", "Assigned", "Collected", "Processing", "Completed"] },
+        "price": { "type": "number" },
+        "paymentMethod": { "type": "string", "enum": ["UPI", "Cash"] },
+        "isFastingConfirmed": { "type": "boolean" },
+        "notes": { "type": "string" },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["bookingId", "userId", "patientName", "status", "createdAt"]
+    },
+    "PatientProfile": {
+      "title": "Patient Profile",
+      "description": "Stored patient information for a specific user",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "userId": { "type": "string" },
+        "name": { "type": "string" },
+        "age": { "type": "number" },
+        "gender": { "type": "string", "enum": ["Male", "Female", "Other"] },
+        "phone": { "type": "string" },
+        "address": { "type": "string" },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["id", "userId", "name"]
+    }
+  },
+  "firestore": {
+    "/users/{userId}": {
+      "schema": "User",
+      "description": "User profile and preferences"
+    },
+    "/users/{userId}/patients/{patientId}": {
+      "schema": "PatientProfile",
+      "description": "Patient profiles managed by the user"
+    },
+    "/bookings/{bookingId}": {
+      "schema": "Booking",
+      "description": "Test booking records"
+    }
+  }
+}

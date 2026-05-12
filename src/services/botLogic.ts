@@ -19,6 +19,29 @@ export interface BotResponse {
   buttons?: string[];
 }
 
+// Create or update a patient profile under users/{phone}/patients/{patientId}.
+// Returns the patientId used. Whatever fields are provided are merged in.
+async function upsertPatientProfile(
+  phone: string,
+  fields: Partial<PatientProfile>,
+  existingId?: string
+): Promise<string> {
+  const patientId = existingId || generateId('PT');
+  const now = new Date().toISOString();
+  const ref = adminDb.collection('users').doc(phone).collection('patients').doc(patientId);
+
+  const payload: Partial<PatientProfile> = {
+    ...fields,
+    id: patientId,
+    userId: phone,
+    updatedAt: now,
+  };
+  if (!existingId) payload.createdAt = now;
+
+  await ref.set(payload, { merge: true });
+  return patientId;
+}
+
 export async function handleWhatsAppMessage(from: string, incomingBody: string): Promise<BotResponse[]> {
   const sessionRef = adminDb.collection('whatsapp_sessions').doc(from);
   const sessionDoc = await sessionRef.get();
@@ -162,14 +185,34 @@ export async function handleWhatsAppMessage(from: string, incomingBody: string):
       // Use Gemini to parse lead details
       const parsed = await parsePatientDetails(value);
       if (parsed) {
+        const patientName = parsed.name;
+        const patientAge = parsed.age || 30; // Default age if not found
+        const patientPhone = parsed.phone || from; // Use sender's phone if not provided
+        let patientGender: 'Male' | 'Female' | 'Other' | undefined;
+        if (parsed.isMale) patientGender = 'Male';
+        else if (parsed.isFemale) patientGender = 'Female';
+
+        // Create patient profile immediately (lead capture).
+        // If we already have a patientId on this session (rare retry case), update it instead.
+        const patientId = await upsertPatientProfile(
+          from,
+          {
+            name: patientName,
+            age: patientAge,
+            phone: patientPhone,
+            ...(patientGender ? { gender: patientGender } : {}),
+          },
+          session.bookingData.patientId
+        );
+
         session.bookingData = {
           ...session.bookingData,
-          patientName: parsed.name,
-          patientAge: parsed.age || 30, // Default age if not found
-          patientPhone: parsed.phone || from // Use sender's phone if not provided
+          patientId,
+          patientName,
+          patientAge,
+          patientPhone,
+          ...(patientGender ? { patientGender } : {}),
         };
-        if (parsed.isMale) session.bookingData.patientGender = 'Male';
-        if (parsed.isFemale) session.bookingData.patientGender = 'Female';
 
         session.step = 'AVAILABILITY_CHECK';
         addResponse(t.askLocation, [t.backToMainMenu]);
@@ -317,7 +360,11 @@ export async function handleWhatsAppMessage(from: string, incomingBody: string):
       break;
 
     case 'PATIENT_GENDER':
-      session.bookingData.patientGender = t.genderMap[value] || 'Other';
+      const newGender = t.genderMap[value] || 'Other';
+      session.bookingData.patientGender = newGender;
+      if (session.bookingData.patientId) {
+        await upsertPatientProfile(from, { gender: newGender }, session.bookingData.patientId);
+      }
       session.step = 'PATIENT_ADDRESS';
       addResponse(t.patientAddress, [t.backToMainMenu]);
       break;
@@ -330,6 +377,13 @@ export async function handleWhatsAppMessage(from: string, incomingBody: string):
 
     case 'PATIENT_ADDRESS_CONFIRM':
       if (value === t.yesCorrect) {
+        if (session.bookingData.patientId && session.bookingData.patientAddress) {
+          await upsertPatientProfile(
+            from,
+            { address: session.bookingData.patientAddress },
+            session.bookingData.patientId
+          );
+        }
         session.step = 'TIME_SLOT';
         addResponse(t.timeSlot, [...t.slots, t.cancelBooking]);
       } else {
@@ -376,6 +430,16 @@ export async function handleWhatsAppMessage(from: string, incomingBody: string):
     case 'PAYMENT':
       const method = value.includes('UPI') ? 'UPI' : 'Cash';
       const bId = generateId();
+
+      // Invariant: patientId is set by PATIENT_DETAILS_ENTRY or PATIENT_SELECTION.
+      // Reject the booking attempt rather than silently writing an orphan.
+      if (!session.bookingData.patientId) {
+        console.error('[Bot] PAYMENT step reached without patientId in session', from);
+        addResponse("❌ Patient details are missing. Please start the booking again.", [t.mainMenu]);
+        session.step = 'MAIN_MENU';
+        break;
+      }
+
       const finalBooking = {
         ...session.bookingData,
         userId: from,
@@ -384,35 +448,21 @@ export async function handleWhatsAppMessage(from: string, incomingBody: string):
         status: 'Created',
         createdAt: new Date().toISOString()
       };
-      
+
       try {
         await adminDb.collection('bookings').doc(bId).set(finalBooking);
-        
-        // Update profile
+
+        // Refresh user profile metadata
         await adminDb.collection('users').doc(from).set({
           userId: from,
           language: session.language,
           lastActive: new Date().toISOString()
         }, { merge: true });
 
-        // Save/Update patient profile
-        const targetPId = session.bookingData.patientId || generateId('PT');
-        const patientToSave: any = {
-          id: targetPId,
-          userId: from,
-          name: session.bookingData.patientName,
-          age: session.bookingData.patientAge,
-          gender: session.bookingData.patientGender,
-          phone: session.bookingData.patientPhone,
-          address: session.bookingData.patientAddress,
-          updatedAt: new Date().toISOString()
-        };
-        if (!session.bookingData.patientId) {
-          patientToSave.createdAt = new Date().toISOString();
-        }
-        
-        await adminDb.collection('users').doc(from).collection('patients').doc(targetPId).set(patientToSave, { merge: true });
-        
+        // Patient profile was already created/updated during the booking flow.
+        // Touch updatedAt so the patient surfaces as recently active.
+        await upsertPatientProfile(from, {}, session.bookingData.patientId);
+
         session.step = 'COMPLETED';
         addResponse(`${t.success}\n*${t.bookingId}: ${bId}*\n${t.phlebMsg}`, [t.mainMenu, t.endSession]);
       } catch (err) {

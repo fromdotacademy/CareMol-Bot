@@ -36,6 +36,8 @@
     "vite": "^6.2.0"
   },
   "devDependencies": {
-    "@firebase/eslint-plugin-security-rules": "^0.0.2"
+    "@firebase/eslint-plugin-security-rules": "^0.0.2",
+    "@types/react": "^19.2.14",
+    "@types/react-dom": "^19.2.3"
   }
 }

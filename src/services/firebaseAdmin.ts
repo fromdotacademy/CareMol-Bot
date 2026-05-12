@@ -22,27 +22,25 @@ let app: admin.app.App;
 
 if (!admin.apps.length) {
   const serviceAccountStr = process.env.FIREBASE_SERVICE_ACCOUNT;
-  
+  const keyFilePath = process.env.FIREBASE_KEY_FILE || process.env.GOOGLE_APPLICATION_CREDENTIALS;
+
   if (serviceAccountStr) {
     try {
       const serviceAccount = JSON.parse(serviceAccountStr);
-      app = admin.initializeApp({
-        credential: admin.credential.cert(serviceAccount)
-      });
-      console.log('Firebase Admin initialized via Service Account');
+      app = admin.initializeApp({ credential: admin.credential.cert(serviceAccount) });
+      console.log('Firebase Admin initialized via FIREBASE_SERVICE_ACCOUNT');
     } catch (e) {
-      console.error('Failed to parse FIREBASE_SERVICE_ACCOUNT, falling back to default credentials');
-      app = admin.initializeApp({
-        projectId: firebaseConfig.projectId
-      });
+      console.error('Failed to parse FIREBASE_SERVICE_ACCOUNT — use FIREBASE_KEY_FILE=/path/to/key.json instead');
+      app = admin.initializeApp({ projectId: firebaseConfig.projectId });
     }
+  } else if (keyFilePath) {
+    // Accepts FIREBASE_KEY_FILE or GOOGLE_APPLICATION_CREDENTIALS pointing to the JSON key file.
+    app = admin.initializeApp({ credential: admin.credential.cert(keyFilePath) });
+    console.log('Firebase Admin initialized via key file:', keyFilePath);
   } else if (firebaseConfig.projectId !== 'missing-config') {
-    app = admin.initializeApp({
-      projectId: firebaseConfig.projectId
-    });
+    app = admin.initializeApp({ projectId: firebaseConfig.projectId });
     console.log('Firebase Admin initialized with Application Default Credentials');
   } else {
-    // Last resort mock app to prevent crash
     app = admin.initializeApp({ projectId: 'mock-id' });
     console.log('Firebase Admin initialized with mock ID (Check your configuration!)');
   }

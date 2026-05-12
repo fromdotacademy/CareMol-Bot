@@ -34,14 +34,15 @@ import {
 import { motion, AnimatePresence } from 'motion/react';
 import { geocodeLocation, isWithinRange } from './services/mapsService';
 import { db, auth } from './lib/firebase';
-import { 
-  collection, 
-  onSnapshot, 
-  query, 
-  orderBy, 
-  addDoc, 
-  updateDoc, 
-  doc, 
+import {
+  collection,
+  collectionGroup,
+  onSnapshot,
+  query,
+  orderBy,
+  addDoc,
+  updateDoc,
+  doc,
   setDoc,
   getDoc,
   getDocs,
@@ -57,9 +58,61 @@ import {
   User as FirebaseUser
 } from 'firebase/auth';
 import { TRANSLATIONS, TEST_PRICES, PACKAGE_DESCRIPTIONS } from './constants';
-import { Booking, BookingStatus, Language, ChatStep, PatientProfile } from './types';
+import { Booking, BookingStatus, Language, ChatStep, PatientProfile, Staff, StaffRole } from './types';
 import { generateId, cn } from './lib/utils';
 import { format } from 'date-fns';
+
+// --- ROLE DETECTION ---
+//
+// Resolution order:
+//   1. Hardcoded bootstrap admins (mirrors firestore.rules.isHardcodedAdmin) so
+//      access cannot be lost if the staff collection is wiped.
+//   2. staff/{uid} record with role + active flag.
+//   3. Otherwise: customer (sees the WhatsApp simulator only).
+const HARDCODED_ADMIN_EMAILS = new Set([
+  'tubejaf@gmail.com',
+  'fromdotacademy@gmail.com',
+]);
+
+type ResolvedRole = StaffRole | 'customer';
+
+function useStaffRole(user: FirebaseUser | null): { role: ResolvedRole | null; loading: boolean } {
+  const [role, setRole] = useState<ResolvedRole | null>(null);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    if (!user) {
+      setRole(null);
+      setLoading(false);
+      return;
+    }
+    setLoading(true);
+    if (user.email && HARDCODED_ADMIN_EMAILS.has(user.email)) {
+      setRole('admin');
+      setLoading(false);
+      return;
+    }
+    const ref = doc(db, 'staff', user.uid);
+    return onSnapshot(
+      ref,
+      (snap) => {
+        if (snap.exists()) {
+          const data = snap.data() as Staff;
+          setRole(data.active === false ? 'customer' : data.role);
+        } else {
+          setRole('customer');
+        }
+        setLoading(false);
+      },
+      () => {
+        setRole('customer');
+        setLoading(false);
+      }
+    );
+  }, [user]);
+
+  return { role, loading };
+}
 
 // --- Firestore Error Handling ---
 
@@ -114,6 +167,28 @@ function handleFirestoreError(error: unknown, operationType: OperationType, path
   throw new Error(JSON.stringify(errInfo));
 }
 
+// --- PATIENT PROFILE HELPER ---
+
+// Create or update a patient profile under users/{userId}/patients/{patientId}.
+// Mirrors upsertPatientProfile in src/services/botLogic.ts.
+async function upsertPatientWeb(
+  userId: string,
+  fields: Partial<PatientProfile>,
+  existingId?: string
+): Promise<string> {
+  const patientId = existingId || generateId('PT');
+  const ref = doc(db, 'users', userId, 'patients', patientId);
+  const payload: any = {
+    ...fields,
+    id: patientId,
+    userId,
+    updatedAt: serverTimestamp(),
+  };
+  if (!existingId) payload.createdAt = serverTimestamp();
+  await setDoc(ref, payload, { merge: true });
+  return patientId;
+}
+
 // --- ERROR BOUNDARY ---
 
 function ErrorFallback({ error }: { error: Error }) {
@@ -150,6 +225,7 @@ export default function App() {
   const [user, setUser] = useState<FirebaseUser | null>(null);
   const [isAuthReady, setIsAuthReady] = useState(false);
   const [dbError, setDbError] = useState<Error | null>(null);
+  const { role, loading: roleLoading } = useStaffRole(user);
 
   useEffect(() => {
     // Connection test
@@ -232,7 +308,9 @@ export default function App() {
               {/* Header */}
               <header className="p-8 border-b border-border-subtle flex items-center justify-between shrink-0">
                 <div>
-                  <h1 className="text-2xl font-bold text-primary">CareMol Admin</h1>
+                  <h1 className="text-2xl font-bold text-primary">
+                    {role === 'phlebotomist' ? 'CareMol Phlebotomist' : 'CareMol Admin'}
+                  </h1>
                   <p className="text-sm text-text-muted">Home Sample Collection | Melattur Center</p>
                 </div>
 
@@ -262,14 +340,36 @@ export default function App() {
               <div className="flex-1 overflow-auto p-8">
                 <AnimatePresence mode="wait">
                   {view === 'dashboard' || window.innerWidth >= 1024 ? (
-                    (user.email === 'tubejaf@gmail.com' || user.email === 'fromdotacademy@gmail.com') ? (
-                      <motion.div 
+                    roleLoading ? (
+                      <motion.div
+                        key="role-loading"
+                        initial={{ opacity: 0 }}
+                        animate={{ opacity: 1 }}
+                        exit={{ opacity: 0 }}
+                        className="h-full flex items-center justify-center"
+                      >
+                        <RefreshCw className="w-6 h-6 text-blue-600 animate-spin" />
+                      </motion.div>
+                    ) : role === 'admin' ? (
+                      <motion.div
                         key="dashboard"
                         initial={{ opacity: 0 }}
                         animate={{ opacity: 1 }}
                         exit={{ opacity: 0 }}
                       >
                         <DashboardView onError={(err) => setDbError(err)} />
+                      </motion.div>
+                    ) : role === 'phlebotomist' ? (
+                      <motion.div
+                        key="phleb"
+                        initial={{ opacity: 0 }}
+                        animate={{ opacity: 1 }}
+                        exit={{ opacity: 0 }}
+                      >
+                        <PhlebotomistDashboard
+                          user={user}
+                          onError={(err) => setDbError(err)}
+                        />
                       </motion.div>
                     ) : (
                       <motion.div
@@ -280,12 +380,12 @@ export default function App() {
                         className="h-full flex flex-col items-center justify-center text-center p-8"
                       >
                         <AlertTriangle className="w-12 h-12 text-orange-500 mb-4" />
-                        <h3 className="text-xl font-bold text-text-dark mb-2">Admin Access Required</h3>
-                        <p className="text-text-muted">The dashboard is reserved for authorized staff. please use the WhatsApp simulator to book tests.</p>
+                        <h3 className="text-xl font-bold text-text-dark mb-2">Staff Access Required</h3>
+                        <p className="text-text-muted">The dashboard is reserved for authorized staff. Please use the WhatsApp simulator to book tests.</p>
                       </motion.div>
                     )
                   ) : (
-                    <motion.div 
+                    <motion.div
                       key="simulator"
                       initial={{ opacity: 0 }}
                       animate={{ opacity: 1 }}
@@ -314,8 +414,13 @@ export default function App() {
 
 function DashboardView({ onError }: { onError: (err: Error) => void }) {
   const [bookings, setBookings] = useState<Booking[]>([]);
+  const [patients, setPatients] = useState<PatientProfile[]>([]);
+  const [staff, setStaff] = useState<Staff[]>([]);
   const [filter, setFilter] = useState<BookingStatus | 'All'>('All');
   const [searchTerm, setSearchTerm] = useState('');
+  const [tab, setTab] = useState<'bookings' | 'patients' | 'staff'>('bookings');
+  const [selectedPatientId, setSelectedPatientId] = useState<string | null>(null);
+  const [editingBookingId, setEditingBookingId] = useState<string | null>(null);
 
   useEffect(() => {
     const q = query(collection(db, 'bookings'), orderBy('createdAt', 'desc'));
@@ -330,6 +435,81 @@ function DashboardView({ onError }: { onError: (err: Error) => void }) {
       }
     });
   }, [onError]);
+
+  useEffect(() => {
+    // Collection-group query: admin can read any patient under any userId
+    // (the firestore rule grants admins access to /users/{*}/patients/{*}).
+    const q = query(collectionGroup(db, 'patients'));
+    return onSnapshot(q, (snapshot) => {
+      const data = snapshot.docs.map(d => d.data() as PatientProfile);
+      setPatients(data);
+    }, (error) => {
+      try {
+        handleFirestoreError(error, OperationType.LIST, 'patients');
+      } catch (e: any) {
+        onError(e);
+      }
+    });
+  }, [onError]);
+
+  useEffect(() => {
+    const qStaff = query(collection(db, 'staff'));
+    return onSnapshot(qStaff, (snapshot) => {
+      const data = snapshot.docs.map(d => ({ ...(d.data() as Staff), uid: d.id }));
+      setStaff(data);
+    }, (error) => {
+      try {
+        handleFirestoreError(error, OperationType.LIST, 'staff');
+      } catch (e: any) {
+        onError(e);
+      }
+    });
+  }, [onError]);
+
+  const openPatient = (patientId: string) => {
+    setSelectedPatientId(patientId);
+    setTab('patients');
+  };
+
+  const phlebotomists = staff.filter(s => s.role === 'phlebotomist' && s.active);
+
+  const assignBooking = async (b: Booking, phleb: Staff | null) => {
+    try {
+      await updateDoc(doc(db, 'bookings', b.bookingId), {
+        assignedTo: phleb?.uid || null,
+        assignedToName: phleb?.name || null,
+        status: phleb ? 'Assigned' : 'Created',
+      });
+    } catch (e) {
+      try { handleFirestoreError(e, OperationType.UPDATE, `bookings/${b.bookingId}`); }
+      catch (err: any) { onError(err); }
+    }
+  };
+
+  const setPriority = async (b: Booking, priority: 'high' | 'medium' | 'low' | '') => {
+    try {
+      await updateDoc(doc(db, 'bookings', b.bookingId), {
+        priority: priority || null,
+      });
+    } catch (e) {
+      try { handleFirestoreError(e, OperationType.UPDATE, `bookings/${b.bookingId}`); }
+      catch (err: any) { onError(err); }
+    }
+  };
+
+  const saveTestsForBooking = async (b: Booking, tests: string[]) => {
+    const price = tests.reduce((sum, t) => sum + (TEST_PRICES[t] || 0), 0);
+    try {
+      await updateDoc(doc(db, 'bookings', b.bookingId), { testNames: tests, price });
+    } catch (e) {
+      try { handleFirestoreError(e, OperationType.UPDATE, `bookings/${b.bookingId}`); }
+      catch (err: any) { onError(err); }
+    }
+  };
+
+  const editingBooking = editingBookingId
+    ? bookings.find(b => b.bookingId === editingBookingId) || null
+    : null;
 
   const stats = {
     total: bookings.length,
@@ -369,29 +549,6 @@ function DashboardView({ onError }: { onError: (err: Error) => void }) {
     }
   };
 
-  const updateTests = async (booking: Booking, mode: 'add' | 'remove') => {
-    const testName = prompt(mode === 'add' ? "Enter test name to add:" : "Enter exact test name to remove:");
-    if (!testName) return;
-
-    let newTests = [...(booking.testNames || [])];
-    if (mode === 'add') {
-      newTests.push(testName);
-    } else {
-      newTests = newTests.filter(t => t !== testName);
-    }
-
-    const newPrice = newTests.reduce((sum, t) => sum + (TEST_PRICES[t] || 500), 0);
-    
-    try {
-      await updateDoc(doc(db, 'bookings', booking.bookingId), { 
-        testNames: newTests,
-        price: newPrice
-      });
-    } catch (e) {
-      onError(e as Error);
-    }
-  };
-
   return (
     <div className="space-y-8">
       {/* KPI Top Bar */}
@@ -402,7 +559,38 @@ function DashboardView({ onError }: { onError: (err: Error) => void }) {
         <StatCard title="Completed Today" value={stats.completed} icon={<CheckCircle2 className="w-5 h-5 text-green-500" />} />
       </div>
 
-      {/* Main Content Area */}
+      {/* Tab Toggle */}
+      <div className="flex items-center gap-1 border-b border-border-subtle">
+        {(['bookings', 'patients', 'staff'] as const).map(t => (
+          <button
+            key={t}
+            onClick={() => setTab(t)}
+            className={cn(
+              "px-4 py-2 text-xs font-bold uppercase tracking-wider border-b-2 transition-colors -mb-px",
+              tab === t
+                ? "text-primary border-primary"
+                : "text-text-muted border-transparent hover:text-text-dark"
+            )}
+          >
+            {t === 'bookings'
+              ? `Bookings (${bookings.length})`
+              : t === 'patients'
+                ? `Patients (${patients.length})`
+                : `Staff (${staff.length})`}
+          </button>
+        ))}
+      </div>
+
+      {tab === 'staff' ? (
+        <StaffView staff={staff} onError={onError} />
+      ) : tab === 'patients' ? (
+        <PatientsView
+          patients={patients}
+          bookings={bookings}
+          selectedPatientId={selectedPatientId}
+          onSelect={setSelectedPatientId}
+        />
+      ) : (
       <div className="bg-white rounded-xl border border-border-subtle overflow-hidden">
         {/* Toolbar */}
         <div className="p-4 border-b border-border-subtle bg-slate-50/50 flex flex-col md:flex-row md:items-center justify-between gap-4">
@@ -496,64 +684,89 @@ function DashboardView({ onError }: { onError: (err: Error) => void }) {
                     </div>
                   </td>
                   <td className="py-4 px-6">
-                    <div className="space-y-1">
+                    <div className="space-y-2">
                       <div className="text-sm font-black text-text-dark">₹{b.price || 0}</div>
-                      <div className="flex items-center gap-2">
-                        {b.status === 'Created' && (
-                          <span className="text-[9px] bg-red-100 text-red-600 px-2 py-0.5 rounded font-bold uppercase">High Priority</span>
+                      <select
+                        value={b.priority || ''}
+                        onChange={(e) => setPriority(b, e.target.value as any)}
+                        title="Override priority"
+                        className={cn(
+                          "text-[9px] font-bold uppercase tracking-widest py-0.5 px-2 rounded border-none cursor-pointer outline-none",
+                          getPriorityStyle(resolvePriority(b))
                         )}
-                        {b.status === 'Assigned' && (
-                          <span className="text-[9px] bg-amber-100 text-amber-600 px-2 py-0.5 rounded font-bold uppercase">Medium Priority</span>
-                        )}
-                        {b.isFastingConfirmed && (
-                           <span className="text-[9px] bg-blue-100 text-blue-600 px-2 py-0.5 rounded font-bold uppercase">Fasting</span>
-                        )}
-                      </div>
+                      >
+                        <option value="">Auto ({resolvePriority(b) || 'none'})</option>
+                        <option value="high">High</option>
+                        <option value="medium">Medium</option>
+                        <option value="low">Low</option>
+                      </select>
+                      {b.isFastingConfirmed && (
+                         <span className="text-[9px] bg-blue-100 text-blue-600 px-2 py-0.5 rounded font-bold uppercase block w-fit">Fasting</span>
+                      )}
                     </div>
                   </td>
                   <td className="py-4 px-6">
-                    <select 
-                      value={b.status}
-                      onChange={(e) => updateStatus(b.bookingId, e.target.value as BookingStatus)}
-                      className={cn(
-                        "text-[10px] font-black uppercase tracking-widest py-1.5 px-4 rounded-full border-none cursor-pointer outline-none shadow-sm transition-all",
-                        getStatusStyle(b.status)
+                    <div className="space-y-2">
+                      <select
+                        value={b.status}
+                        onChange={(e) => updateStatus(b.bookingId, e.target.value as BookingStatus)}
+                        className={cn(
+                          "text-[10px] font-black uppercase tracking-widest py-1.5 px-4 rounded-full border-none cursor-pointer outline-none shadow-sm transition-all",
+                          getStatusStyle(b.status)
+                        )}
+                      >
+                        <option value="Created">Created</option>
+                        <option value="Assigned">Assigned</option>
+                        <option value="Collected">Collected</option>
+                        <option value="Processing">Processing</option>
+                        <option value="Completed">Completed</option>
+                      </select>
+                      <select
+                        value={b.assignedTo || ''}
+                        onChange={(e) => {
+                          const phleb = phlebotomists.find(p => p.uid === e.target.value) || null;
+                          assignBooking(b, phleb);
+                        }}
+                        title="Assign phlebotomist"
+                        className="text-[10px] font-bold py-1 px-2 rounded border border-border-subtle bg-white cursor-pointer outline-none w-full max-w-[160px]"
+                      >
+                        <option value="">Unassigned</option>
+                        {phlebotomists.map(p => (
+                          <option key={p.uid} value={p.uid}>{p.name}</option>
+                        ))}
+                      </select>
+                      {b.assignedToName && b.assignedTo && !phlebotomists.find(p => p.uid === b.assignedTo) && (
+                        <div className="text-[9px] text-text-muted italic">→ {b.assignedToName} (inactive)</div>
                       )}
-                    >
-                      <option value="Created">Created</option>
-                      <option value="Assigned">Assigned</option>
-                      <option value="Collected">Collected</option>
-                      <option value="Processing">Processing</option>
-                      <option value="Completed">Completed</option>
-                    </select>
+                    </div>
                   </td>
                   <td className="py-4 px-6 text-right">
                     <div className="flex items-center justify-end gap-2">
-                      <button 
+                      <button
                         title="Call Patient"
                         onClick={() => window.open(`tel:${b.patientPhone}`)}
                         className="p-2 text-text-muted hover:text-primary hover:bg-white rounded-lg transition-all border border-transparent hover:border-border-subtle"
                       >
                         <Phone className="w-4 h-4" />
                       </button>
-                      <div className="flex flex-col gap-1">
-                        <button 
-                          title="Add Test"
-                          onClick={() => updateTests(b, 'add')}
-                          className="p-1 px-2 text-[9px] bg-slate-100 text-text-dark rounded hover:bg-emerald-50 hover:text-emerald-600 transition-all font-bold uppercase"
+                      {b.patientId && (
+                        <button
+                          title="View patient profile"
+                          onClick={() => openPatient(b.patientId)}
+                          className="p-2 text-text-muted hover:text-primary hover:bg-white rounded-lg transition-all border border-transparent hover:border-border-subtle"
                         >
-                          + Add Test
+                          <User className="w-4 h-4" />
                         </button>
-                        <button 
-                          title="Remove Test"
-                          onClick={() => updateTests(b, 'remove')}
-                          className="p-1 px-2 text-[9px] bg-slate-100 text-text-dark rounded hover:bg-red-50 hover:text-red-600 transition-all font-bold uppercase"
-                        >
-                          - Remove
-                        </button>
-                      </div>
+                      )}
+                      <button
+                        title="Edit tests"
+                        onClick={() => setEditingBookingId(b.bookingId)}
+                        className="p-1 px-2 text-[9px] bg-slate-100 text-text-dark rounded hover:bg-primary hover:text-white transition-all font-bold uppercase"
+                      >
+                        Edit Tests
+                      </button>
                       {b.status === 'Processing' && (
-                        <button 
+                        <button
                           onClick={() => updateStatus(b.bookingId, 'Completed')}
                           className="flex items-center gap-2 px-3 py-1.5 bg-primary text-white text-[10px] font-bold uppercase tracking-wider rounded-lg shadow-lg shadow-primary/20 hover:scale-105 transition-all"
                         >
@@ -583,6 +796,710 @@ function DashboardView({ onError }: { onError: (err: Error) => void }) {
           </table>
         </div>
       </div>
+      )}
+
+      {editingBooking && (
+        <TestPickerModal
+          booking={editingBooking}
+          onClose={() => setEditingBookingId(null)}
+          onSave={(tests) => { saveTestsForBooking(editingBooking, tests); setEditingBookingId(null); }}
+        />
+      )}
+    </div>
+  );
+}
+
+function PatientsView({
+  patients,
+  bookings,
+  selectedPatientId,
+  onSelect,
+}: {
+  patients: PatientProfile[];
+  bookings: Booking[];
+  selectedPatientId: string | null;
+  onSelect: (id: string | null) => void;
+}) {
+  const [search, setSearch] = useState('');
+
+  const sorted = [...patients].sort((a, b) => {
+    const ta = (a as any).updatedAt || a.createdAt || '';
+    const tb = (b as any).updatedAt || b.createdAt || '';
+    return String(tb).localeCompare(String(ta));
+  });
+
+  const term = search.trim().toLowerCase();
+  const filtered = term
+    ? sorted.filter(p =>
+        (p.name || '').toLowerCase().includes(term) ||
+        (p.phone || '').includes(term) ||
+        (p.userId || '').includes(term)
+      )
+    : sorted;
+
+  const selected = selectedPatientId ? patients.find(p => p.id === selectedPatientId) : null;
+  const patientBookings = selected
+    ? bookings.filter(b => b.patientId === selected.id)
+    : [];
+
+  return (
+    <div className="bg-white rounded-xl border border-border-subtle overflow-hidden grid grid-cols-1 lg:grid-cols-[320px_1fr]">
+      {/* List */}
+      <div className="border-r border-border-subtle">
+        <div className="p-3 border-b border-border-subtle bg-slate-50/50">
+          <div className="flex items-center gap-2 bg-white border border-border-subtle rounded-lg px-3 py-1.5">
+            <Search className="w-4 h-4 text-text-muted" />
+            <input
+              type="text"
+              placeholder="Search patients..."
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+              className="bg-transparent border-none text-xs outline-none w-full text-text-dark"
+            />
+          </div>
+        </div>
+        <div className="max-h-[60vh] overflow-auto divide-y divide-border-subtle">
+          {filtered.length === 0 && (
+            <div className="p-6 text-center text-text-muted text-xs">No patients yet</div>
+          )}
+          {filtered.map(p => (
+            <button
+              key={p.id}
+              onClick={() => onSelect(p.id)}
+              className={cn(
+                "w-full text-left px-4 py-3 hover:bg-primary/5 transition-colors flex items-center gap-3",
+                selectedPatientId === p.id && "bg-primary/10"
+              )}
+            >
+              <div className="w-9 h-9 rounded-full bg-slate-100 flex items-center justify-center border border-border-subtle">
+                <User className="w-4 h-4 text-primary" />
+              </div>
+              <div className="flex-1 min-w-0">
+                <div className="font-bold text-sm text-text-dark truncate">{p.name || 'Unnamed'}</div>
+                <div className="text-[10px] text-text-muted truncate">
+                  {p.phone || 'no phone'} · {p.userId}
+                </div>
+              </div>
+            </button>
+          ))}
+        </div>
+      </div>
+
+      {/* Detail */}
+      <div className="p-6">
+        {!selected ? (
+          <div className="h-full flex flex-col items-center justify-center text-center text-text-muted py-16">
+            <Users className="w-10 h-10 opacity-20 mb-2" />
+            <p className="text-sm">Select a patient to view bookings</p>
+          </div>
+        ) : (
+          <div className="space-y-6">
+            <div className="flex items-start justify-between">
+              <div>
+                <h3 className="text-xl font-bold text-text-dark">{selected.name}</h3>
+                <p className="text-xs text-text-muted">
+                  {selected.gender || '—'} · {selected.age || '?'} yrs · {selected.phone || 'no phone'}
+                </p>
+                {selected.address && (
+                  <p className="text-xs text-text-muted flex items-center gap-1 mt-1">
+                    <MapPin className="w-3 h-3" /> {selected.address}
+                  </p>
+                )}
+                <p className="text-[10px] text-text-muted mt-2 uppercase tracking-widest font-bold">
+                  Phone account: {selected.userId} · Patient ID: {selected.id}
+                </p>
+              </div>
+              <button
+                onClick={() => onSelect(null)}
+                className="p-1 text-text-muted hover:text-text-dark"
+                title="Clear selection"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            <div>
+              <h4 className="text-[10px] font-black text-text-muted uppercase tracking-widest mb-3">
+                Bookings ({patientBookings.length})
+              </h4>
+              {patientBookings.length === 0 ? (
+                <div className="text-xs text-text-muted bg-slate-50 border border-border-subtle rounded-lg p-4 text-center">
+                  No bookings yet for this patient.
+                </div>
+              ) : (
+                <div className="space-y-2">
+                  {patientBookings.map(b => (
+                    <div
+                      key={b.bookingId}
+                      className="flex items-center justify-between border border-border-subtle rounded-lg px-4 py-3 hover:bg-slate-50 transition-colors"
+                    >
+                      <div className="flex-1 min-w-0">
+                        <div className="text-sm font-bold text-text-dark">
+                          {(b.testNames || []).join(', ') || '—'}
+                        </div>
+                        <div className="text-[10px] text-text-muted mt-0.5 flex items-center gap-2">
+                          <span>{b.bookingId}</span>
+                          <span>·</span>
+                          <span>{b.timeSlot || 'no slot'}</span>
+                          <span>·</span>
+                          <span>₹{b.price || 0}</span>
+                        </div>
+                      </div>
+                      <span className={cn(
+                        "text-[9px] font-black uppercase tracking-widest px-2 py-1 rounded",
+                        getStatusStyle(b.status)
+                      )}>
+                        {b.status}
+                      </span>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function StaffView({ staff, onError }: { staff: Staff[]; onError: (err: Error) => void }) {
+  const [showForm, setShowForm] = useState(false);
+  const [form, setForm] = useState({ uid: '', name: '', email: '', phone: '', role: 'phlebotomist' as StaffRole });
+  const [saving, setSaving] = useState(false);
+
+  const reset = () => setForm({ uid: '', name: '', email: '', phone: '', role: 'phlebotomist' });
+
+  const submit = async () => {
+    if (!form.uid.trim() || !form.email.trim() || !form.name.trim()) return;
+    setSaving(true);
+    try {
+      await setDoc(doc(db, 'staff', form.uid.trim()), {
+        uid: form.uid.trim(),
+        email: form.email.trim(),
+        name: form.name.trim(),
+        phone: form.phone.trim() || null,
+        role: form.role,
+        active: true,
+        createdAt: new Date().toISOString(),
+        createdBy: auth.currentUser?.uid || null,
+      }, { merge: true });
+      reset();
+      setShowForm(false);
+    } catch (e) {
+      try { handleFirestoreError(e, OperationType.WRITE, `staff/${form.uid}`); }
+      catch (err: any) { onError(err); }
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const toggleActive = async (s: Staff) => {
+    try {
+      await updateDoc(doc(db, 'staff', s.uid), { active: !s.active });
+    } catch (e) {
+      try { handleFirestoreError(e, OperationType.UPDATE, `staff/${s.uid}`); }
+      catch (err: any) { onError(err); }
+    }
+  };
+
+  return (
+    <div className="bg-white rounded-xl border border-border-subtle overflow-hidden">
+      <div className="p-4 border-b border-border-subtle bg-slate-50/50 flex items-center justify-between">
+        <div>
+          <h3 className="font-bold text-text-dark">Staff Members</h3>
+          <p className="text-xs text-text-muted">Admins and phlebotomists with dashboard access</p>
+        </div>
+        <button
+          onClick={() => setShowForm(v => !v)}
+          className="px-4 py-2 bg-primary text-white text-[11px] font-bold uppercase tracking-wider rounded-lg hover:opacity-90 transition-opacity flex items-center gap-2"
+        >
+          <Plus className="w-3 h-3" />
+          {showForm ? 'Cancel' : 'Add Staff'}
+        </button>
+      </div>
+
+      {showForm && (
+        <div className="p-5 border-b border-border-subtle bg-blue-50/50 space-y-3">
+          <p className="text-[10px] text-text-muted uppercase tracking-widest font-bold">
+            The staff member must sign in with Google once first so we know their Firebase UID.
+            Paste that UID below along with their details.
+          </p>
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+            <input
+              type="text"
+              placeholder="Firebase UID"
+              value={form.uid}
+              onChange={(e) => setForm({ ...form, uid: e.target.value })}
+              className="px-3 py-2 border border-border-subtle rounded-lg text-sm outline-none focus:border-primary"
+            />
+            <input
+              type="email"
+              placeholder="Email"
+              value={form.email}
+              onChange={(e) => setForm({ ...form, email: e.target.value })}
+              className="px-3 py-2 border border-border-subtle rounded-lg text-sm outline-none focus:border-primary"
+            />
+            <input
+              type="text"
+              placeholder="Full Name"
+              value={form.name}
+              onChange={(e) => setForm({ ...form, name: e.target.value })}
+              className="px-3 py-2 border border-border-subtle rounded-lg text-sm outline-none focus:border-primary"
+            />
+            <input
+              type="tel"
+              placeholder="Phone (optional)"
+              value={form.phone}
+              onChange={(e) => setForm({ ...form, phone: e.target.value })}
+              className="px-3 py-2 border border-border-subtle rounded-lg text-sm outline-none focus:border-primary"
+            />
+            <select
+              value={form.role}
+              onChange={(e) => setForm({ ...form, role: e.target.value as StaffRole })}
+              className="px-3 py-2 border border-border-subtle rounded-lg text-sm outline-none focus:border-primary bg-white"
+            >
+              <option value="phlebotomist">Phlebotomist</option>
+              <option value="admin">Admin</option>
+            </select>
+            <button
+              onClick={submit}
+              disabled={saving || !form.uid.trim() || !form.email.trim() || !form.name.trim()}
+              className="px-4 py-2 bg-primary text-white text-[11px] font-bold uppercase tracking-wider rounded-lg hover:opacity-90 transition-opacity disabled:opacity-50"
+            >
+              {saving ? 'Saving…' : 'Save Staff Member'}
+            </button>
+          </div>
+        </div>
+      )}
+
+      <table className="w-full">
+        <thead>
+          <tr className="bg-slate-50 border-b border-border-subtle">
+            <th className="text-left py-3 px-6 text-[10px] font-black text-text-muted uppercase tracking-widest">Name</th>
+            <th className="text-left py-3 px-6 text-[10px] font-black text-text-muted uppercase tracking-widest">Role</th>
+            <th className="text-left py-3 px-6 text-[10px] font-black text-text-muted uppercase tracking-widest">Email / Phone</th>
+            <th className="text-left py-3 px-6 text-[10px] font-black text-text-muted uppercase tracking-widest">UID</th>
+            <th className="text-right py-3 px-6 text-[10px] font-black text-text-muted uppercase tracking-widest">Active</th>
+          </tr>
+        </thead>
+        <tbody className="divide-y divide-border-subtle">
+          {staff.length === 0 ? (
+            <tr><td colSpan={5} className="py-10 text-center text-text-muted text-xs">No staff records yet. Add one to get started.</td></tr>
+          ) : staff.map(s => (
+            <tr key={s.uid} className="hover:bg-slate-50/50">
+              <td className="py-3 px-6 text-sm font-bold text-text-dark">{s.name}</td>
+              <td className="py-3 px-6">
+                <span className={cn(
+                  "text-[9px] font-black uppercase tracking-widest px-2 py-0.5 rounded",
+                  s.role === 'admin' ? 'bg-purple-100 text-purple-700' : 'bg-blue-100 text-blue-700'
+                )}>
+                  {s.role}
+                </span>
+              </td>
+              <td className="py-3 px-6 text-xs text-text-muted">
+                <div>{s.email}</div>
+                {s.phone && <div className="text-[10px]">{s.phone}</div>}
+              </td>
+              <td className="py-3 px-6 text-[10px] text-text-muted font-mono">{s.uid}</td>
+              <td className="py-3 px-6 text-right">
+                <button
+                  onClick={() => toggleActive(s)}
+                  className={cn(
+                    "text-[10px] font-bold uppercase tracking-wider px-3 py-1 rounded-full transition-colors",
+                    s.active ? "bg-emerald-100 text-emerald-700 hover:bg-emerald-200" : "bg-slate-100 text-slate-500 hover:bg-slate-200"
+                  )}
+                >
+                  {s.active ? 'Active' : 'Inactive'}
+                </button>
+              </td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
+function PhlebotomistDashboard({ user, onError }: { user: FirebaseUser; onError: (err: Error) => void }) {
+  const [myBookings, setMyBookings] = useState<Booking[]>([]);
+  const [unassigned, setUnassigned] = useState<Booking[]>([]);
+  const [editingBookingId, setEditingBookingId] = useState<string | null>(null);
+  const [showCompleted, setShowCompleted] = useState(false);
+
+  useEffect(() => {
+    // Own assignments (any status)
+    const qMine = query(collection(db, 'bookings'), where('assignedTo', '==', user.uid));
+    return onSnapshot(qMine, (snap) => {
+      const data = snap.docs.map(d => ({ ...d.data(), bookingId: d.id } as Booking));
+      data.sort((a, b) => (a.timeSlot || '').localeCompare(b.timeSlot || ''));
+      setMyBookings(data);
+    }, (error) => {
+      try { handleFirestoreError(error, OperationType.LIST, 'bookings (assigned)'); }
+      catch (e: any) { onError(e); }
+    });
+  }, [user.uid, onError]);
+
+  useEffect(() => {
+    // Unassigned queue (Created bookings the rule permits any phleb to see)
+    const qCreated = query(collection(db, 'bookings'), where('status', '==', 'Created'));
+    return onSnapshot(qCreated, (snap) => {
+      const data = snap.docs
+        .map(d => ({ ...d.data(), bookingId: d.id } as Booking))
+        .filter(b => !b.assignedTo);
+      data.sort((a, b) => String(b.createdAt || '').localeCompare(String(a.createdAt || '')));
+      setUnassigned(data);
+    }, (error) => {
+      try { handleFirestoreError(error, OperationType.LIST, 'bookings (queue)'); }
+      catch (e: any) { onError(e); }
+    });
+  }, [onError]);
+
+  const todayISO = new Date().toISOString().slice(0, 10);
+  const active = myBookings.filter(b => b.status === 'Assigned' || b.status === 'Collected' || b.status === 'Processing');
+  const completedToday = myBookings.filter(b =>
+    b.status === 'Completed' && String(b.createdAt || '').slice(0, 10) === todayISO
+  );
+
+  const selfAssign = async (b: Booking) => {
+    try {
+      await updateDoc(doc(db, 'bookings', b.bookingId), {
+        status: 'Assigned',
+        assignedTo: user.uid,
+        assignedToName: user.displayName || user.email || 'Phlebotomist',
+      });
+    } catch (e) {
+      try { handleFirestoreError(e, OperationType.UPDATE, `bookings/${b.bookingId}`); }
+      catch (err: any) { onError(err); }
+    }
+  };
+
+  const transition = async (b: Booking, next: BookingStatus) => {
+    try {
+      await updateDoc(doc(db, 'bookings', b.bookingId), { status: next });
+    } catch (e) {
+      try { handleFirestoreError(e, OperationType.UPDATE, `bookings/${b.bookingId}`); }
+      catch (err: any) { onError(err); }
+    }
+  };
+
+  const saveTests = async (b: Booking, newTests: string[]) => {
+    const newPrice = newTests.reduce((sum, t) => sum + (TEST_PRICES[t] || 0), 0);
+    try {
+      await updateDoc(doc(db, 'bookings', b.bookingId), {
+        testNames: newTests,
+        price: newPrice,
+      });
+    } catch (e) {
+      try { handleFirestoreError(e, OperationType.UPDATE, `bookings/${b.bookingId}`); }
+      catch (err: any) { onError(err); }
+    }
+  };
+
+  const editingBooking = editingBookingId
+    ? [...myBookings, ...unassigned].find(b => b.bookingId === editingBookingId) || null
+    : null;
+
+  const expectedRevenue = active.reduce((sum, b) => sum + (b.price || 0), 0);
+
+  return (
+    <div className="space-y-8">
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+        <StatCard title="Today's Assignments" value={active.length} icon={<Calendar className="w-5 h-5 text-blue-500" />} />
+        <StatCard title="Unassigned Queue" value={unassigned.length} icon={<AlertTriangle className="w-5 h-5 text-amber-500" />} />
+        <StatCard title="Expected Revenue" value={`₹${expectedRevenue.toLocaleString()}`} icon={<TrendingUp className="w-5 h-5 text-emerald-500" />} />
+      </div>
+
+      <section>
+        <h3 className="text-[10px] font-black text-text-muted uppercase tracking-widest mb-3">
+          Today's Assignments ({active.length})
+        </h3>
+        {active.length === 0 ? (
+          <div className="text-xs text-text-muted bg-white border border-border-subtle rounded-xl p-6 text-center">
+            No active assignments. Self-assign from the queue below.
+          </div>
+        ) : (
+          <div className="space-y-3">
+            {active.map(b => (
+              <PhlebBookingCard
+                key={b.bookingId}
+                booking={b}
+                mode="assigned"
+                onEditTests={() => setEditingBookingId(b.bookingId)}
+                onMarkCollected={() => transition(b, 'Collected')}
+                onMarkProcessing={() => transition(b, 'Processing')}
+              />
+            ))}
+          </div>
+        )}
+      </section>
+
+      <section>
+        <h3 className="text-[10px] font-black text-text-muted uppercase tracking-widest mb-3">
+          Unassigned Queue ({unassigned.length})
+        </h3>
+        {unassigned.length === 0 ? (
+          <div className="text-xs text-text-muted bg-white border border-border-subtle rounded-xl p-6 text-center">
+            No unassigned bookings in the queue.
+          </div>
+        ) : (
+          <div className="space-y-3">
+            {unassigned.map(b => (
+              <PhlebBookingCard
+                key={b.bookingId}
+                booking={b}
+                mode="queue"
+                onSelfAssign={() => selfAssign(b)}
+              />
+            ))}
+          </div>
+        )}
+      </section>
+
+      <section>
+        <button
+          onClick={() => setShowCompleted(v => !v)}
+          className="text-[10px] font-black text-text-muted uppercase tracking-widest mb-3 flex items-center gap-2 hover:text-text-dark"
+        >
+          {showCompleted ? <ChevronDown className="w-3 h-3" /> : <ChevronRight className="w-3 h-3" />}
+          Completed Today ({completedToday.length})
+        </button>
+        {showCompleted && completedToday.map(b => (
+          <PhlebBookingCard key={b.bookingId} booking={b} mode="completed" />
+        ))}
+      </section>
+
+      {editingBooking && (
+        <TestPickerModal
+          booking={editingBooking}
+          onClose={() => setEditingBookingId(null)}
+          onSave={(tests) => { saveTests(editingBooking, tests); setEditingBookingId(null); }}
+        />
+      )}
+    </div>
+  );
+}
+
+function PhlebBookingCard({
+  booking,
+  mode,
+  onSelfAssign,
+  onEditTests,
+  onMarkCollected,
+  onMarkProcessing,
+}: {
+  booking: Booking;
+  mode: 'queue' | 'assigned' | 'completed';
+  onSelfAssign?: () => void;
+  onEditTests?: () => void;
+  onMarkCollected?: () => void;
+  onMarkProcessing?: () => void;
+}) {
+  const priority = resolvePriority(booking);
+  const mapsHref = booking.patientAddress
+    ? `https://maps.google.com/?q=${encodeURIComponent(booking.patientAddress)}`
+    : null;
+
+  return (
+    <div className="bg-white border border-border-subtle rounded-xl p-5 hover:shadow-md transition-shadow">
+      <div className="flex items-start justify-between gap-4 mb-4">
+        <div className="flex items-start gap-3">
+          <div className="w-10 h-10 rounded-full bg-slate-100 flex items-center justify-center border border-border-subtle">
+            <User className="w-5 h-5 text-primary" />
+          </div>
+          <div>
+            <div className="flex items-center gap-2 flex-wrap">
+              <span className="font-bold text-text-dark">{booking.patientName}</span>
+              <span className="text-[9px] bg-slate-100 px-2 py-0.5 rounded font-black tracking-tighter uppercase text-text-dark">
+                {booking.patientGender || '—'} · {booking.patientAge || '?'}
+              </span>
+              {priority && (
+                <span className={cn(
+                  "text-[9px] px-2 py-0.5 rounded font-bold uppercase",
+                  getPriorityStyle(priority)
+                )}>
+                  {priority} priority
+                </span>
+              )}
+              <span className={cn(
+                "text-[9px] px-2 py-0.5 rounded font-black uppercase tracking-widest",
+                getStatusStyle(booking.status)
+              )}>
+                {booking.status}
+              </span>
+            </div>
+            <div className="text-[10px] text-text-muted mt-1 flex items-center gap-3 flex-wrap">
+              <a href={`tel:${booking.patientPhone}`} className="flex items-center gap-1 hover:text-primary">
+                <Phone className="w-3 h-3" /> {booking.patientPhone || 'no phone'}
+              </a>
+              <span className="flex items-center gap-1">
+                <Clock className="w-3 h-3" /> {booking.timeSlot || 'no slot'}
+              </span>
+              {booking.isFastingConfirmed && (
+                <span className="flex items-center gap-1 text-blue-600 font-bold">
+                  <Activity className="w-3 h-3" /> Fasting
+                </span>
+              )}
+            </div>
+          </div>
+        </div>
+        <div className="text-right">
+          <div className="text-lg font-black text-text-dark">₹{booking.price || 0}</div>
+          <div className="text-[9px] text-text-muted uppercase tracking-widest font-bold">Revenue</div>
+        </div>
+      </div>
+
+      <div className="space-y-2 mb-4">
+        <div className="text-xs">
+          <span className="font-bold text-text-dark">Tests: </span>
+          <span className="text-text-muted">{(booking.testNames || []).join(', ') || '—'}</span>
+        </div>
+        {booking.patientAddress && (
+          <div className="text-xs flex items-start gap-1">
+            <MapPin className="w-3 h-3 mt-0.5 shrink-0 text-text-muted" />
+            <span className="text-text-muted flex-1">{booking.patientAddress}</span>
+            {mapsHref && (
+              <a
+                href={mapsHref}
+                target="_blank"
+                rel="noreferrer"
+                className="text-[10px] font-bold text-primary hover:underline whitespace-nowrap"
+              >
+                Open in Maps ↗
+              </a>
+            )}
+          </div>
+        )}
+        {booking.notes && (
+          <div className="text-xs bg-orange-50 border border-orange-100 rounded px-2 py-1.5 text-orange-700">
+            <span className="font-bold">Note: </span>{booking.notes}
+          </div>
+        )}
+      </div>
+
+      {mode !== 'completed' && (
+        <div className="flex items-center gap-2 flex-wrap pt-3 border-t border-border-subtle">
+          {mode === 'queue' && (
+            <button
+              onClick={onSelfAssign}
+              className="px-4 py-2 bg-primary text-white text-[11px] font-bold uppercase tracking-wider rounded-lg hover:opacity-90 transition-opacity"
+            >
+              Self-Assign
+            </button>
+          )}
+          {mode === 'assigned' && (
+            <>
+              <button
+                onClick={onEditTests}
+                className="px-3 py-1.5 bg-slate-100 text-text-dark text-[10px] font-bold uppercase tracking-wider rounded-lg hover:bg-slate-200 transition-colors"
+              >
+                Edit Tests
+              </button>
+              {booking.status === 'Assigned' && (
+                <button
+                  onClick={onMarkCollected}
+                  className="px-3 py-1.5 bg-teal-600 text-white text-[10px] font-bold uppercase tracking-wider rounded-lg hover:opacity-90 transition-opacity"
+                >
+                  Mark Collected
+                </button>
+              )}
+              {booking.status === 'Collected' && (
+                <button
+                  onClick={onMarkProcessing}
+                  className="px-3 py-1.5 bg-purple-600 text-white text-[10px] font-bold uppercase tracking-wider rounded-lg hover:opacity-90 transition-opacity"
+                >
+                  Mark Processing
+                </button>
+              )}
+              {booking.status === 'Processing' && (
+                <span className="text-[10px] font-bold text-purple-700 uppercase tracking-widest">
+                  Awaiting admin to mark Completed
+                </span>
+              )}
+            </>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function TestPickerModal({
+  booking,
+  onClose,
+  onSave,
+}: {
+  booking: Booking;
+  onClose: () => void;
+  onSave: (tests: string[]) => void;
+}) {
+  const [selected, setSelected] = useState<string[]>(booking.testNames || []);
+  // English catalog from TEST_PRICES (skip Malayalam duplicates)
+  const englishTests = Object.keys(TEST_PRICES).filter(n => /^[A-Za-z0-9 \-/]+$/.test(n));
+
+  const toggle = (name: string) => {
+    setSelected(prev => prev.includes(name) ? prev.filter(n => n !== name) : [...prev, name]);
+  };
+
+  const total = selected.reduce((sum, n) => sum + (TEST_PRICES[n] || 0), 0);
+
+  return (
+    <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4">
+      <div className="bg-white rounded-2xl max-w-md w-full max-h-[80vh] flex flex-col overflow-hidden">
+        <header className="p-5 border-b border-border-subtle flex items-center justify-between">
+          <div>
+            <h3 className="font-bold text-text-dark">Edit Tests</h3>
+            <p className="text-xs text-text-muted">Booking {booking.bookingId} · {booking.patientName}</p>
+          </div>
+          <button onClick={onClose} className="text-text-muted hover:text-text-dark">
+            <X className="w-5 h-5" />
+          </button>
+        </header>
+        <div className="flex-1 overflow-auto p-5 space-y-2">
+          {englishTests.map(name => {
+            const isOn = selected.includes(name);
+            return (
+              <button
+                key={name}
+                onClick={() => toggle(name)}
+                className={cn(
+                  "w-full flex items-center justify-between px-4 py-3 rounded-lg border transition-colors text-left",
+                  isOn ? "border-primary bg-primary/5" : "border-border-subtle hover:bg-slate-50"
+                )}
+              >
+                <div>
+                  <div className="font-bold text-sm text-text-dark">{name}</div>
+                  <div className="text-[10px] text-text-muted">{PACKAGE_DESCRIPTIONS[name] || ''}</div>
+                </div>
+                <div className="flex items-center gap-3">
+                  <span className="text-sm font-black text-text-dark">₹{TEST_PRICES[name] || 0}</span>
+                  {isOn ? <CheckCircle2 className="w-5 h-5 text-primary" /> : <Plus className="w-5 h-5 text-text-muted" />}
+                </div>
+              </button>
+            );
+          })}
+        </div>
+        <footer className="p-5 border-t border-border-subtle flex items-center justify-between">
+          <div className="text-sm">
+            <span className="text-text-muted">Total: </span>
+            <span className="font-black text-text-dark">₹{total}</span>
+          </div>
+          <div className="flex gap-2">
+            <button
+              onClick={onClose}
+              className="px-4 py-2 text-[11px] font-bold uppercase tracking-wider text-text-muted hover:text-text-dark"
+            >
+              Cancel
+            </button>
+            <button
+              onClick={() => onSave(selected)}
+              className="px-5 py-2 bg-primary text-white text-[11px] font-bold uppercase tracking-wider rounded-lg hover:opacity-90"
+            >
+              Save
+            </button>
+          </div>
+        </footer>
+      </div>
     </div>
   );
 }
@@ -599,6 +1516,27 @@ function StatCard({ title, value, icon }: { title: string, value: any, icon: Rea
       </div>
     </div>
   );
+}
+
+function resolvePriority(b: Booking): 'high' | 'medium' | 'low' | null {
+  if (b.priority) return b.priority;
+  switch (b.status) {
+    case 'Created': return 'high';
+    case 'Assigned': return 'medium';
+    case 'Collected':
+    case 'Processing': return 'low';
+    case 'Completed': return null;
+    default: return 'medium';
+  }
+}
+
+function getPriorityStyle(p: 'high' | 'medium' | 'low' | null) {
+  switch (p) {
+    case 'high': return 'bg-red-100 text-red-600';
+    case 'medium': return 'bg-amber-100 text-amber-600';
+    case 'low': return 'bg-slate-100 text-slate-600';
+    default: return 'bg-slate-100 text-slate-400';
+  }
 }
 
 function getStatusStyle(status: BookingStatus) {
@@ -963,15 +1901,27 @@ function WhatsAppSimulator({ userId }: { userId: string }) {
           const sName = parts[0] || 'Patient';
           const sAge = parseInt(parts[1]) || 30;
           const sPhone = parts[2] || '';
-          
-          setBookingData(prev => ({ 
-            ...prev, 
-            patientName: sName,
-            patientAge: sAge,
-            patientPhone: sPhone
-          }));
-          setStep('AVAILABILITY_CHECK');
-          addBotMessage(t.askLocation, [t.backToMainMenu], true);
+
+          try {
+            // Create patient profile immediately (lead capture).
+            const newPatientId = await upsertPatientWeb(
+              userId,
+              { name: sName, age: sAge, phone: sPhone },
+              bookingData.patientId
+            );
+            setBookingData(prev => ({
+              ...prev,
+              patientId: newPatientId,
+              patientName: sName,
+              patientAge: sAge,
+              patientPhone: sPhone
+            }));
+            setStep('AVAILABILITY_CHECK');
+            addBotMessage(t.askLocation, [t.backToMainMenu], true);
+          } catch (e) {
+            console.error('[Simulator] Failed to save patient profile', e);
+            addBotMessage("❌ Could not save details. Please try again.", [t.cancelBooking], true);
+          }
           break;
 
         case 'PATIENT_SELECTION':
@@ -1091,6 +2041,13 @@ function WhatsAppSimulator({ userId }: { userId: string }) {
         case 'PATIENT_GENDER':
           const internalGender = t.genderMap[value] || 'Other';
           setBookingData(prev => ({ ...prev, patientGender: internalGender as any }));
+          if (bookingData.patientId) {
+            try {
+              await upsertPatientWeb(userId, { gender: internalGender as any }, bookingData.patientId);
+            } catch (e) {
+              console.error('[Simulator] Failed to update gender on patient', e);
+            }
+          }
           setStep('PATIENT_ADDRESS');
           addBotMessage(t.patientAddress, [t.backToMainMenu], true);
           break;
@@ -1111,6 +2068,17 @@ function WhatsAppSimulator({ userId }: { userId: string }) {
 
         case 'PATIENT_ADDRESS_CONFIRM':
           if (value === t.yesCorrect) {
+            if (bookingData.patientId && bookingData.patientAddress) {
+              try {
+                await upsertPatientWeb(
+                  userId,
+                  { address: bookingData.patientAddress },
+                  bookingData.patientId
+                );
+              } catch (e) {
+                console.error('[Simulator] Failed to update address on patient', e);
+              }
+            }
             setStep('TIME_SLOT');
             addBotMessage(t.timeSlot, [...t.slots, t.backToMainMenu]);
           } else {
@@ -1169,7 +2137,15 @@ function WhatsAppSimulator({ userId }: { userId: string }) {
 
         case 'PAYMENT':
           const currentMethod = value.includes('UPI') ? 'UPI' : 'Cash';
-          
+
+          // Invariant: patientId is set by PATIENT_DETAILS_ENTRY or PATIENT_SELECTION.
+          if (!bookingData.patientId) {
+            console.error('[Simulator] PAYMENT step reached without patientId');
+            addBotMessage("❌ Patient details are missing. Please start the booking again.", [t.mainMenu]);
+            setStep('MAIN_MENU');
+            break;
+          }
+
           // Complete the booking in Firestore
           const finalId = generateId();
           const newBooking: any = {
@@ -1182,10 +2158,8 @@ function WhatsAppSimulator({ userId }: { userId: string }) {
           };
 
           try {
-            // Save Booking
             await setDoc(doc(db, 'bookings', finalId), newBooking);
-            
-            // 1. Save/Update Base User Profile for language persistence
+
             await setDoc(doc(db, 'users', userId), {
               userId: userId,
               name: bookingData.patientName, // Keep last patient name as reference
@@ -1193,24 +2167,8 @@ function WhatsAppSimulator({ userId }: { userId: string }) {
               lastActive: serverTimestamp()
             }, { merge: true });
 
-            // 2. Save/Update Patient Profile for this specific patient
-            // If bookingData.patientId exists, we update the existing one.
-            // Otherwise, we create a new one.
-            const targetPatientId = bookingData.patientId || generateId();
-            const patientRef = doc(db, 'users', userId, 'patients', targetPatientId);
-            
-            const patientData: PatientProfile = {
-              id: targetPatientId,
-              userId: userId,
-              name: bookingData.patientName,
-              age: bookingData.patientAge,
-              gender: bookingData.patientGender,
-              phone: bookingData.patientPhone,
-              address: bookingData.patientAddress,
-              createdAt: serverTimestamp()
-            } as any;
-
-            await setDoc(patientRef, patientData, { merge: true });
+            // Touch patient updatedAt to surface as recently active.
+            await upsertPatientWeb(userId, {}, bookingData.patientId);
 
             const shareOptions = [t.shareToWhatsApp, t.mainMenu, t.endSession];
             setStep('COMPLETED');

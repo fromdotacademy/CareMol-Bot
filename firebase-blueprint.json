@@ -48,9 +48,26 @@
         "gender": { "type": "string", "enum": ["Male", "Female", "Other"] },
         "phone": { "type": "string" },
         "address": { "type": "string" },
-        "createdAt": { "type": "string", "format": "date-time" }
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
       },
       "required": ["id", "userId", "name"]
+    },
+    "Staff": {
+      "title": "Staff",
+      "description": "Admin or phlebotomist staff member",
+      "type": "object",
+      "properties": {
+        "uid": { "type": "string" },
+        "email": { "type": "string" },
+        "name": { "type": "string" },
+        "phone": { "type": "string" },
+        "role": { "type": "string", "enum": ["admin", "phlebotomist"] },
+        "active": { "type": "boolean" },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "createdBy": { "type": "string" }
+      },
+      "required": ["uid", "email", "role", "active"]
     }
   },
   "firestore": {
@@ -65,6 +82,10 @@
     "/bookings/{bookingId}": {
       "schema": "Booking",
       "description": "Test booking records"
+    },
+    "/staff/{uid}": {
+      "schema": "Staff",
+      "description": "Internal staff (admins & phlebotomists). uid is the Firebase Auth uid."
     }
   }
 }

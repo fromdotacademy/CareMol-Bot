@@ -2,9 +2,13 @@ export type Language = 'en' | 'ml';
 
 export type BookingStatus = 'Created' | 'Assigned' | 'Collected' | 'Processing' | 'Completed';
 
+export type Priority = 'high' | 'medium' | 'low';
+
+export type StaffRole = 'admin' | 'phlebotomist';
+
 export interface Booking {
   bookingId: string;
-  patientId?: string;
+  patientId: string;
   userId: string;
   patientName: string;
   patientAge: number;
@@ -19,6 +23,20 @@ export interface Booking {
   isFastingConfirmed: boolean;
   notes?: string;
   createdAt: string;
+  priority?: Priority;
+  assignedTo?: string; // staff uid (phlebotomist)
+  assignedToName?: string;
+}
+
+export interface Staff {
+  uid: string;
+  email: string;
+  name: string;
+  phone?: string;
+  role: StaffRole;
+  active: boolean;
+  createdAt: string;
+  createdBy?: string;
 }
 
 export interface UserProfile {
@@ -38,6 +56,7 @@ export interface PatientProfile {
   phone: string;
   address?: string;
   createdAt: string;
+  updatedAt?: string;
 }
 
 export type ChatStep = 

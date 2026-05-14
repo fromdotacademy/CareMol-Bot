@@ -2,8 +2,16 @@ import { adminDb } from './firebaseAdmin';
 import { TRANSLATIONS, TEST_PRICES, PACKAGE_DESCRIPTIONS } from '../constants';
 import { geocodeLocation, isWithinRange } from './mapsService';
 import { generateId } from '../lib/utils';
-import { ChatStep, Language, Booking, PatientProfile } from '../types';
+import { ChatStep, Language, Booking, BookingConfig, PatientProfile } from '../types';
 import { parsePatientDetails } from './geminiService';
+import {
+  defaultBookingConfig,
+  rememberBookingConfig,
+  getCachedBookingConfig,
+  getNextNDates,
+  formatDateLabel,
+  formatSlotLabel,
+} from './slotService';
 
 export interface BotSession {
   userId: string; // Phone number
@@ -17,6 +25,28 @@ export interface BotSession {
 export interface BotResponse {
   text: string;
   buttons?: string[];
+}
+
+// Loads config/booking via the Admin SDK, with the ~60s in-memory cache from
+// slotService. Falls back to defaults if the doc is absent or read fails so the
+// bot keeps working before the seed script runs.
+async function loadBookingConfig(): Promise<BookingConfig> {
+  const cached = getCachedBookingConfig();
+  if (cached) return cached;
+  try {
+    const snap = await adminDb.collection('config').doc('booking').get();
+    if (snap.exists) {
+      const data = snap.data() as Partial<BookingConfig>;
+      const merged: BookingConfig = { ...defaultBookingConfig(), ...data };
+      rememberBookingConfig(merged);
+      return merged;
+    }
+  } catch (e) {
+    console.warn('[Bot] config/booking read failed; using defaults', e);
+  }
+  const fb = defaultBookingConfig();
+  rememberBookingConfig(fb);
+  return fb;
 }
 
 // Create or update a patient profile under users/{phone}/patients/{patientId}.
@@ -384,23 +414,50 @@ export async function handleWhatsAppMessage(from: string, incomingBody: string):
             session.bookingData.patientId
           );
         }
-        session.step = 'TIME_SLOT';
-        addResponse(t.timeSlot, [...t.slots, t.cancelBooking]);
+        const cfgForDate = await loadBookingConfig();
+        const datesForPrompt = getNextNDates(cfgForDate.maxAdvanceDays);
+        const dateLabels = datesForPrompt.map(d => formatDateLabel(d, session.language || 'en'));
+        session.step = 'DATE_SELECTION';
+        addResponse(t.chooseDate, [...dateLabels, t.cancelBooking]);
       } else {
         session.step = 'PATIENT_ADDRESS';
         addResponse(t.patientAddress, [t.cancelBooking]);
       }
       break;
 
-    case 'TIME_SLOT':
-      if (t.slots.includes(value)) {
+    case 'DATE_SELECTION': {
+      const cfg = await loadBookingConfig();
+      const dates = getNextNDates(cfg.maxAdvanceDays);
+      const dateLabels = dates.map(d => formatDateLabel(d, session.language || 'en'));
+      const idx = dateLabels.indexOf(value);
+      if (idx >= 0) {
+        session.bookingData.bookingDate = dates[idx];
+        session.step = 'TIME_SLOT';
+        const slotLabels = cfg.slots.map(s => formatSlotLabel(s, session.language || 'en'));
+        addResponse(t.timeSlot, [...slotLabels, t.cancelBooking]);
+      } else {
+        const advanceMsg = t.advanceLimitError.replace('{n}', String(cfg.maxAdvanceDays));
+        addResponse(`${advanceMsg}\n\n${t.chooseDate}`, [...dateLabels, t.cancelBooking]);
+      }
+      break;
+    }
+
+    case 'TIME_SLOT': {
+      const cfg = await loadBookingConfig();
+      const slotLabels = cfg.slots.map(s => formatSlotLabel(s, session.language || 'en'));
+      const idx = slotLabels.indexOf(value);
+      if (idx >= 0) {
+        const slot = cfg.slots[idx];
+        session.bookingData.slotStart = slot.start;
+        session.bookingData.slotEnd = slot.end;
         session.bookingData.timeSlot = value;
         session.step = 'FASTING_CHECK';
         addResponse(t.fastingCheck, ['Yes / അതെ', 'No / ഇല്ല']);
       } else {
-        addResponse(t.timeSlot, [...t.slots, t.cancelBooking]);
+        addResponse(t.timeSlot, [...slotLabels, t.cancelBooking]);
       }
       break;
+    }
 
     case 'FASTING_CHECK':
       session.bookingData.isFastingConfirmed = value.includes('Yes');
@@ -413,7 +470,10 @@ export async function handleWhatsAppMessage(from: string, incomingBody: string):
       session.bookingData.notes = notesText;
       session.step = 'CONFIRMATION';
       const fPrice = (session.bookingData.testNames || []).reduce((sum, test) => sum + (TEST_PRICES[test] || 0), 0);
-      const summary = `*${t.confirmHeader}*\n\nTests: ${(session.bookingData.testNames || []).join(', ')}\nPrice: ₹${fPrice}\nPatient: ${session.bookingData.patientName} (${session.bookingData.patientAge})\nAddress: ${session.bookingData.patientAddress}\nNotes: ${notesText || 'None'}`;
+      const confirmDateLabel = session.bookingData.bookingDate
+        ? formatDateLabel(session.bookingData.bookingDate, session.language || 'en')
+        : '—';
+      const summary = `*${t.confirmHeader}*\n\nTests: ${(session.bookingData.testNames || []).join(', ')}\nPrice: ₹${fPrice}\nPatient: ${session.bookingData.patientName} (${session.bookingData.patientAge})\nAddress: ${session.bookingData.patientAddress}\nDate: ${confirmDateLabel}\nSlot: ${session.bookingData.timeSlot || '—'}\nNotes: ${notesText || 'None'}`;
       addResponse(summary, [session.language === 'en' ? 'Confirm' : 'സ്ഥിരീകരിക്കുക', 'Edit / തിരുത്തുക']);
       break;
 

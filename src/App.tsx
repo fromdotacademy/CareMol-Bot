@@ -1,14 +1,14 @@
-import React, { useState, useEffect, useRef } from 'react';
-import { 
-  Phone, 
-  LayoutDashboard, 
-  MessageSquare, 
-  Search, 
-  Plus, 
-  CheckCircle, 
-  Clock, 
-  User, 
-  MapPin, 
+import React, { useState, useEffect, useRef, useMemo } from 'react';
+import {
+  Phone,
+  LayoutDashboard,
+  MessageSquare,
+  Search,
+  Plus,
+  CheckCircle,
+  Clock,
+  User,
+  MapPin,
   MoreVertical,
   LogOut,
   Send,
@@ -29,7 +29,9 @@ import {
   Bell,
   TrendingUp,
   Users,
-  CheckCircle2
+  CheckCircle2,
+  Settings,
+  Trash2
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { geocodeLocation, isWithinRange } from './services/mapsService';
@@ -48,7 +50,8 @@ import {
   getDocs,
   where,
   serverTimestamp,
-  getDocFromServer
+  getDocFromServer,
+  deleteDoc
 } from 'firebase/firestore';
 import { 
   onAuthStateChanged, 
@@ -58,9 +61,21 @@ import {
   User as FirebaseUser
 } from 'firebase/auth';
 import { TRANSLATIONS, TEST_PRICES, PACKAGE_DESCRIPTIONS } from './constants';
-import { Booking, BookingStatus, Language, ChatStep, PatientProfile, Staff, StaffRole } from './types';
+import { Booking, BookingStatus, Language, ChatStep, PatientProfile, Staff, StaffRole, BookingConfig, PhlebAvailability, WeeklySchedule, SlotConfig } from './types';
 import { generateId, cn } from './lib/utils';
 import { format } from 'date-fns';
+import {
+  defaultBookingConfig,
+  rememberBookingConfig,
+  invalidateBookingConfigCache,
+  effectiveSlotsFromDocs,
+  formatSlotLabel,
+  formatDateLabel,
+  weekdayKey,
+  phlebAvailabilityDocId,
+  getNextNDates,
+  getISTToday,
+} from './services/slotService';
 
 // --- ROLE DETECTION ---
 //
@@ -112,6 +127,36 @@ function useStaffRole(user: FirebaseUser | null): { role: ResolvedRole | null; l
   }, [user]);
 
   return { role, loading };
+}
+
+// --- BOOKING CONFIG ---
+//
+// Subscribes to the singleton config/booking doc with the slot template and
+// max-advance window. Falls back to defaultBookingConfig() if absent so the
+// UI still renders. Also populates the in-memory cache in slotService so any
+// non-React caller in this process sees fresh values.
+function useBookingConfig(): BookingConfig {
+  const [config, setConfig] = useState<BookingConfig>(defaultBookingConfig());
+  useEffect(() => {
+    const ref = doc(db, 'config', 'booking');
+    return onSnapshot(
+      ref,
+      (snap) => {
+        if (snap.exists()) {
+          const data = snap.data() as Partial<BookingConfig>;
+          const merged: BookingConfig = { ...defaultBookingConfig(), ...data };
+          setConfig(merged);
+          rememberBookingConfig(merged);
+        } else {
+          setConfig(defaultBookingConfig());
+        }
+      },
+      () => {
+        // Permission denied or other read error — keep the fallback config.
+      }
+    );
+  }, []);
+  return config;
 }
 
 // --- Firestore Error Handling ---
@@ -416,11 +461,15 @@ function DashboardView({ onError }: { onError: (err: Error) => void }) {
   const [bookings, setBookings] = useState<Booking[]>([]);
   const [patients, setPatients] = useState<PatientProfile[]>([]);
   const [staff, setStaff] = useState<Staff[]>([]);
+  const [phlebAvailMap, setPhlebAvailMap] = useState<Record<string, PhlebAvailability>>({});
   const [filter, setFilter] = useState<BookingStatus | 'All'>('All');
+  const [dateFilter, setDateFilter] = useState<'upcoming' | 'all'>('upcoming');
   const [searchTerm, setSearchTerm] = useState('');
-  const [tab, setTab] = useState<'bookings' | 'patients' | 'staff'>('bookings');
+  const [tab, setTab] = useState<'bookings' | 'patients' | 'staff' | 'schedule' | 'settings'>('bookings');
   const [selectedPatientId, setSelectedPatientId] = useState<string | null>(null);
   const [editingBookingId, setEditingBookingId] = useState<string | null>(null);
+  const [overrideForBooking, setOverrideForBooking] = useState<Set<string>>(new Set());
+  const config = useBookingConfig();
 
   useEffect(() => {
     const q = query(collection(db, 'bookings'), orderBy('createdAt', 'desc'));
@@ -463,6 +512,25 @@ function DashboardView({ onError }: { onError: (err: Error) => void }) {
       } catch (e: any) {
         onError(e);
       }
+    });
+  }, [onError]);
+
+  // Snapshot of all per-date phleb availability overrides. Used by the
+  // Schedule tab and by the assignment dropdown to filter eligible phlebs.
+  useEffect(() => {
+    const qAvail = query(collection(db, 'phlebAvailability'));
+    return onSnapshot(qAvail, (snap) => {
+      const map: Record<string, PhlebAvailability> = {};
+      snap.docs.forEach(d => {
+        const data = d.data() as PhlebAvailability;
+        if (data.date && data.phlebotomistUid) {
+          map[`${data.date}_${data.phlebotomistUid}`] = data;
+        }
+      });
+      setPhlebAvailMap(map);
+    }, (error) => {
+      try { handleFirestoreError(error, OperationType.LIST, 'phlebAvailability'); }
+      catch (e: any) { onError(e); }
     });
   }, [onError]);
 
@@ -519,12 +587,62 @@ function DashboardView({ onError }: { onError: (err: Error) => void }) {
     completed: bookings.filter(b => b.status === 'Completed').length,
   };
 
-  const filteredBookings = bookings.filter(b => {
-    const matchesFilter = filter === 'All' || b.status === filter;
-    const matchesSearch = b.patientName.toLowerCase().includes(searchTerm.toLowerCase()) || 
-                         (b.patientPhone && b.patientPhone.includes(searchTerm));
-    return matchesFilter && matchesSearch;
-  });
+  const filteredBookings = useMemo(() => {
+    const today = getISTToday();
+    const futureWindow = getNextNDates(Math.max(1, config.maxAdvanceDays));
+    const upperBound = futureWindow[futureWindow.length - 1];
+    const dateFiltered = bookings.filter(b => {
+      if (dateFilter === 'all') return true;
+      if (!b.bookingDate) return true; // legacy — keep visible
+      return b.bookingDate >= today && b.bookingDate <= upperBound;
+    });
+    const matched = dateFiltered.filter(b => {
+      const matchesFilter = filter === 'All' || b.status === filter;
+      const matchesSearch = b.patientName.toLowerCase().includes(searchTerm.toLowerCase()) ||
+                           (b.patientPhone && b.patientPhone.includes(searchTerm));
+      return matchesFilter && matchesSearch;
+    });
+    return matched.slice().sort((a, b) => {
+      // Dated bookings first (ascending by date, then slot), legacy last (by createdAt desc).
+      if (a.bookingDate && b.bookingDate) {
+        const dCmp = a.bookingDate.localeCompare(b.bookingDate);
+        if (dCmp !== 0) return dCmp;
+        return (a.slotStart || '').localeCompare(b.slotStart || '');
+      }
+      if (a.bookingDate) return -1;
+      if (b.bookingDate) return 1;
+      return String(b.createdAt || '').localeCompare(String(a.createdAt || ''));
+    });
+  }, [bookings, filter, searchTerm, dateFilter, config.maxAdvanceDays]);
+
+  // Per-booking availability resolver. Returns the list of phlebs eligible to
+  // be assigned and the reason (so the row can render an appropriate hint).
+  const getAssignablePhlebs = (b: Booking): { phlebs: Staff[]; reason: 'legacy' | 'override' | 'filtered' } => {
+    if (!b.bookingDate || !b.slotStart) return { phlebs: phlebotomists, reason: 'legacy' };
+    if (overrideForBooking.has(b.bookingId)) return { phlebs: phlebotomists, reason: 'override' };
+    const filtered = phlebotomists.filter(p => {
+      const override = phlebAvailMap[`${b.bookingDate}_${p.uid}`] ?? null;
+      const effective = effectiveSlotsFromDocs(p, override, b.bookingDate!);
+      if (!effective.includes(b.slotStart!)) return false;
+      const conflict = bookings.find(other =>
+        other.bookingId !== b.bookingId &&
+        other.assignedTo === p.uid &&
+        other.bookingDate === b.bookingDate &&
+        other.slotStart === b.slotStart &&
+        other.status !== 'Completed'
+      );
+      return !conflict;
+    });
+    return { phlebs: filtered, reason: 'filtered' };
+  };
+
+  const toggleAssignOverride = (bookingId: string) => {
+    setOverrideForBooking(prev => {
+      const next = new Set(prev);
+      if (next.has(bookingId)) next.delete(bookingId); else next.add(bookingId);
+      return next;
+    });
+  };
 
   const updateStatus = async (id: string, newStatus: BookingStatus) => {
     try {
@@ -560,13 +678,13 @@ function DashboardView({ onError }: { onError: (err: Error) => void }) {
       </div>
 
       {/* Tab Toggle */}
-      <div className="flex items-center gap-1 border-b border-border-subtle">
-        {(['bookings', 'patients', 'staff'] as const).map(t => (
+      <div className="flex items-center gap-1 border-b border-border-subtle overflow-x-auto">
+        {(['bookings', 'patients', 'staff', 'schedule', 'settings'] as const).map(t => (
           <button
             key={t}
             onClick={() => setTab(t)}
             className={cn(
-              "px-4 py-2 text-xs font-bold uppercase tracking-wider border-b-2 transition-colors -mb-px",
+              "px-4 py-2 text-xs font-bold uppercase tracking-wider border-b-2 transition-colors -mb-px whitespace-nowrap",
               tab === t
                 ? "text-primary border-primary"
                 : "text-text-muted border-transparent hover:text-text-dark"
@@ -576,13 +694,21 @@ function DashboardView({ onError }: { onError: (err: Error) => void }) {
               ? `Bookings (${bookings.length})`
               : t === 'patients'
                 ? `Patients (${patients.length})`
-                : `Staff (${staff.length})`}
+                : t === 'staff'
+                  ? `Staff (${staff.length})`
+                  : t === 'schedule'
+                    ? 'Schedule'
+                    : 'Settings'}
           </button>
         ))}
       </div>
 
-      {tab === 'staff' ? (
-        <StaffView staff={staff} onError={onError} />
+      {tab === 'settings' ? (
+        <SettingsView config={config} onError={onError} />
+      ) : tab === 'schedule' ? (
+        <ScheduleView staff={staff} config={config} bookings={bookings} onError={onError} />
+      ) : tab === 'staff' ? (
+        <StaffView staff={staff} config={config} onError={onError} />
       ) : tab === 'patients' ? (
         <PatientsView
           patients={patients}
@@ -607,19 +733,33 @@ function DashboardView({ onError }: { onError: (err: Error) => void }) {
 
           <div className="flex items-center gap-2 overflow-x-auto pb-1 md:pb-0">
             {['All', 'Created', 'Assigned', 'Collected', 'Processing', 'Completed'].map(s => (
-              <button 
+              <button
                 key={s}
                 onClick={() => setFilter(s as any)}
                 className={cn(
                   "px-3 py-1.5 text-[10px] font-bold uppercase tracking-wider rounded-md border transition-all whitespace-nowrap",
-                  filter === s 
-                    ? "bg-primary text-white border-primary shadow-sm" 
+                  filter === s
+                    ? "bg-primary text-white border-primary shadow-sm"
                     : "bg-white text-text-muted border-border-subtle hover:bg-slate-50"
                 )}
               >
                 {s}
               </button>
             ))}
+            <div className="w-px h-5 bg-border-subtle mx-1" />
+            <button
+              onClick={() => setDateFilter(d => d === 'upcoming' ? 'all' : 'upcoming')}
+              title={dateFilter === 'upcoming' ? 'Showing today + next ' + config.maxAdvanceDays + ' days. Click to show all.' : 'Showing all dates. Click to limit to upcoming.'}
+              className={cn(
+                "px-3 py-1.5 text-[10px] font-bold uppercase tracking-wider rounded-md border transition-all whitespace-nowrap flex items-center gap-1",
+                dateFilter === 'upcoming'
+                  ? "bg-blue-100 text-blue-700 border-blue-200"
+                  : "bg-white text-text-muted border-border-subtle hover:bg-slate-50"
+              )}
+            >
+              <Calendar className="w-3 h-3" />
+              {dateFilter === 'upcoming' ? 'Upcoming' : 'All dates'}
+            </button>
           </div>
         </div>
 
@@ -664,7 +804,18 @@ function DashboardView({ onError }: { onError: (err: Error) => void }) {
                       </div>
                       <div className="flex flex-col gap-0.5 ml-4">
                         <span className="text-[10px] text-text-muted font-bold flex items-center gap-1">
-                          <Clock className="w-3 h-3" /> {b.timeSlot}
+                          <Calendar className="w-3 h-3" />
+                          {b.bookingDate ? (
+                            <span className="text-text-dark">{formatDateLabel(b.bookingDate, 'en')}</span>
+                          ) : (
+                            <>
+                              <span className="text-text-muted">—</span>
+                              <span className="text-[9px] font-black bg-amber-100 text-amber-700 px-1 py-0.5 rounded uppercase tracking-widest">Legacy</span>
+                            </>
+                          )}
+                        </span>
+                        <span className="text-[10px] text-text-muted font-bold flex items-center gap-1">
+                          <Clock className="w-3 h-3" /> {b.timeSlot || '—'}
                         </span>
                         {b.isFastingConfirmed && (
                            <span className="text-[9px] text-blue-600 font-bold flex items-center gap-1">
@@ -677,7 +828,7 @@ function DashboardView({ onError }: { onError: (err: Error) => void }) {
                            </span>
                         )}
                         <div className="text-[10px] text-text-muted italic flex items-center gap-1">
-                          <MapPin className="w-3 h-3 shrink-0" /> 
+                          <MapPin className="w-3 h-3 shrink-0" />
                           <span className="line-clamp-1">{b.patientAddress}</span>
                         </div>
                       </div>
@@ -721,23 +872,64 @@ function DashboardView({ onError }: { onError: (err: Error) => void }) {
                         <option value="Processing">Processing</option>
                         <option value="Completed">Completed</option>
                       </select>
-                      <select
-                        value={b.assignedTo || ''}
-                        onChange={(e) => {
-                          const phleb = phlebotomists.find(p => p.uid === e.target.value) || null;
-                          assignBooking(b, phleb);
-                        }}
-                        title="Assign phlebotomist"
-                        className="text-[10px] font-bold py-1 px-2 rounded border border-border-subtle bg-white cursor-pointer outline-none w-full max-w-[160px]"
-                      >
-                        <option value="">Unassigned</option>
-                        {phlebotomists.map(p => (
-                          <option key={p.uid} value={p.uid}>{p.name}</option>
-                        ))}
-                      </select>
-                      {b.assignedToName && b.assignedTo && !phlebotomists.find(p => p.uid === b.assignedTo) && (
-                        <div className="text-[9px] text-text-muted italic">→ {b.assignedToName} (inactive)</div>
-                      )}
+                      {(() => {
+                        const { phlebs: assignable, reason } = getAssignablePhlebs(b);
+                        // Ensure currently assigned (even if outside filter) stays selectable so admin doesn't lose track.
+                        const dropdownPhlebs = b.assignedTo && !assignable.find(p => p.uid === b.assignedTo)
+                          ? [...assignable, ...phlebotomists.filter(p => p.uid === b.assignedTo)]
+                          : assignable;
+                        return (
+                          <>
+                            <select
+                              value={b.assignedTo || ''}
+                              onChange={(e) => {
+                                const phleb = phlebotomists.find(p => p.uid === e.target.value) || null;
+                                assignBooking(b, phleb);
+                              }}
+                              title="Assign phlebotomist"
+                              className="text-[10px] font-bold py-1 px-2 rounded border border-border-subtle bg-white cursor-pointer outline-none w-full max-w-[160px]"
+                            >
+                              <option value="">Unassigned</option>
+                              {dropdownPhlebs.map(p => (
+                                <option key={p.uid} value={p.uid}>{p.name}</option>
+                              ))}
+                            </select>
+                            {reason === 'legacy' && (
+                              <div className="text-[9px] text-amber-700 italic">No date set — all phlebs shown</div>
+                            )}
+                            {reason === 'filtered' && assignable.length === 0 && (
+                              <button
+                                onClick={() => toggleAssignOverride(b.bookingId)}
+                                className="text-[9px] font-bold text-red-600 hover:underline text-left"
+                              >
+                                No phlebs available — show all
+                              </button>
+                            )}
+                            {reason === 'filtered' && assignable.length > 0 && (
+                              <label className="flex items-center gap-1 text-[9px] text-text-muted cursor-pointer">
+                                <input
+                                  type="checkbox"
+                                  checked={false}
+                                  onChange={() => toggleAssignOverride(b.bookingId)}
+                                  className="w-3 h-3 accent-primary"
+                                />
+                                Show all (override filter)
+                              </label>
+                            )}
+                            {reason === 'override' && (
+                              <button
+                                onClick={() => toggleAssignOverride(b.bookingId)}
+                                className="text-[9px] font-bold text-primary hover:underline text-left"
+                              >
+                                Re-filter to available
+                              </button>
+                            )}
+                            {b.assignedToName && b.assignedTo && !phlebotomists.find(p => p.uid === b.assignedTo) && (
+                              <div className="text-[9px] text-text-muted italic">→ {b.assignedToName} (inactive)</div>
+                            )}
+                          </>
+                        );
+                      })()}
                     </div>
                   </td>
                   <td className="py-4 px-6 text-right">
@@ -963,18 +1155,40 @@ function PatientsView({
   );
 }
 
-function StaffView({ staff, onError }: { staff: Staff[]; onError: (err: Error) => void }) {
-  const [showForm, setShowForm] = useState(false);
-  const [form, setForm] = useState({ uid: '', name: '', email: '', phone: '', role: 'phlebotomist' as StaffRole });
-  const [saving, setSaving] = useState(false);
+function defaultWeeklySchedule(slots: SlotConfig[]): WeeklySchedule {
+  const starts = slots.map(s => s.start);
+  return { sun: [], mon: starts, tue: starts, wed: starts, thu: starts, fri: starts, sat: starts };
+}
 
-  const reset = () => setForm({ uid: '', name: '', email: '', phone: '', role: 'phlebotomist' });
+function emptyWeeklySchedule(): WeeklySchedule {
+  return { sun: [], mon: [], tue: [], wed: [], thu: [], fri: [], sat: [] };
+}
+
+function StaffView({ staff, config, onError }: { staff: Staff[]; config: BookingConfig; onError: (err: Error) => void }) {
+  const [showForm, setShowForm] = useState(false);
+  const [form, setForm] = useState<{
+    uid: string;
+    name: string;
+    email: string;
+    phone: string;
+    role: StaffRole;
+    defaultSchedule: WeeklySchedule;
+  }>({ uid: '', name: '', email: '', phone: '', role: 'phlebotomist', defaultSchedule: defaultWeeklySchedule(config.slots) });
+  const [saving, setSaving] = useState(false);
+  const [editingScheduleUid, setEditingScheduleUid] = useState<string | null>(null);
+  const [editingScheduleDraft, setEditingScheduleDraft] = useState<WeeklySchedule>(emptyWeeklySchedule());
+  const [savingSchedule, setSavingSchedule] = useState(false);
+
+  const reset = () => setForm({
+    uid: '', name: '', email: '', phone: '', role: 'phlebotomist',
+    defaultSchedule: defaultWeeklySchedule(config.slots),
+  });
 
   const submit = async () => {
     if (!form.uid.trim() || !form.email.trim() || !form.name.trim()) return;
     setSaving(true);
     try {
-      await setDoc(doc(db, 'staff', form.uid.trim()), {
+      const payload: any = {
         uid: form.uid.trim(),
         email: form.email.trim(),
         name: form.name.trim(),
@@ -983,7 +1197,11 @@ function StaffView({ staff, onError }: { staff: Staff[]; onError: (err: Error) =
         active: true,
         createdAt: new Date().toISOString(),
         createdBy: auth.currentUser?.uid || null,
-      }, { merge: true });
+      };
+      if (form.role === 'phlebotomist') {
+        payload.defaultSchedule = form.defaultSchedule;
+      }
+      await setDoc(doc(db, 'staff', form.uid.trim()), payload, { merge: true });
       reset();
       setShowForm(false);
     } catch (e) {
@@ -1000,6 +1218,24 @@ function StaffView({ staff, onError }: { staff: Staff[]; onError: (err: Error) =
     } catch (e) {
       try { handleFirestoreError(e, OperationType.UPDATE, `staff/${s.uid}`); }
       catch (err: any) { onError(err); }
+    }
+  };
+
+  const startEditingSchedule = (s: Staff) => {
+    setEditingScheduleUid(s.uid);
+    setEditingScheduleDraft(s.defaultSchedule ?? defaultWeeklySchedule(config.slots));
+  };
+
+  const saveSchedule = async (uid: string) => {
+    setSavingSchedule(true);
+    try {
+      await updateDoc(doc(db, 'staff', uid), { defaultSchedule: editingScheduleDraft });
+      setEditingScheduleUid(null);
+    } catch (e) {
+      try { handleFirestoreError(e, OperationType.UPDATE, `staff/${uid}`); }
+      catch (err: any) { onError(err); }
+    } finally {
+      setSavingSchedule(false);
     }
   };
 
@@ -1062,6 +1298,17 @@ function StaffView({ staff, onError }: { staff: Staff[]; onError: (err: Error) =
               <option value="phlebotomist">Phlebotomist</option>
               <option value="admin">Admin</option>
             </select>
+          </div>
+          {form.role === 'phlebotomist' && (
+            <div className="bg-white border border-border-subtle rounded-lg p-3">
+              <DefaultScheduleEditor
+                value={form.defaultSchedule}
+                templateSlots={config.slots}
+                onChange={(next) => setForm({ ...form, defaultSchedule: next })}
+              />
+            </div>
+          )}
+          <div className="flex justify-end">
             <button
               onClick={submit}
               disabled={saving || !form.uid.trim() || !form.email.trim() || !form.name.trim()}
@@ -1080,43 +1327,645 @@ function StaffView({ staff, onError }: { staff: Staff[]; onError: (err: Error) =
             <th className="text-left py-3 px-6 text-[10px] font-black text-text-muted uppercase tracking-widest">Role</th>
             <th className="text-left py-3 px-6 text-[10px] font-black text-text-muted uppercase tracking-widest">Email / Phone</th>
             <th className="text-left py-3 px-6 text-[10px] font-black text-text-muted uppercase tracking-widest">UID</th>
+            <th className="text-left py-3 px-6 text-[10px] font-black text-text-muted uppercase tracking-widest">Schedule</th>
             <th className="text-right py-3 px-6 text-[10px] font-black text-text-muted uppercase tracking-widest">Active</th>
           </tr>
         </thead>
         <tbody className="divide-y divide-border-subtle">
           {staff.length === 0 ? (
-            <tr><td colSpan={5} className="py-10 text-center text-text-muted text-xs">No staff records yet. Add one to get started.</td></tr>
+            <tr><td colSpan={6} className="py-10 text-center text-text-muted text-xs">No staff records yet. Add one to get started.</td></tr>
           ) : staff.map(s => (
-            <tr key={s.uid} className="hover:bg-slate-50/50">
-              <td className="py-3 px-6 text-sm font-bold text-text-dark">{s.name}</td>
-              <td className="py-3 px-6">
-                <span className={cn(
-                  "text-[9px] font-black uppercase tracking-widest px-2 py-0.5 rounded",
-                  s.role === 'admin' ? 'bg-purple-100 text-purple-700' : 'bg-blue-100 text-blue-700'
-                )}>
-                  {s.role}
-                </span>
-              </td>
-              <td className="py-3 px-6 text-xs text-text-muted">
-                <div>{s.email}</div>
-                {s.phone && <div className="text-[10px]">{s.phone}</div>}
-              </td>
-              <td className="py-3 px-6 text-[10px] text-text-muted font-mono">{s.uid}</td>
-              <td className="py-3 px-6 text-right">
-                <button
-                  onClick={() => toggleActive(s)}
-                  className={cn(
-                    "text-[10px] font-bold uppercase tracking-wider px-3 py-1 rounded-full transition-colors",
-                    s.active ? "bg-emerald-100 text-emerald-700 hover:bg-emerald-200" : "bg-slate-100 text-slate-500 hover:bg-slate-200"
+            <React.Fragment key={s.uid}>
+              <tr className="hover:bg-slate-50/50">
+                <td className="py-3 px-6 text-sm font-bold text-text-dark">{s.name}</td>
+                <td className="py-3 px-6">
+                  <span className={cn(
+                    "text-[9px] font-black uppercase tracking-widest px-2 py-0.5 rounded",
+                    s.role === 'admin' ? 'bg-purple-100 text-purple-700' : 'bg-blue-100 text-blue-700'
+                  )}>
+                    {s.role}
+                  </span>
+                </td>
+                <td className="py-3 px-6 text-xs text-text-muted">
+                  <div>{s.email}</div>
+                  {s.phone && <div className="text-[10px]">{s.phone}</div>}
+                </td>
+                <td className="py-3 px-6 text-[10px] text-text-muted font-mono">{s.uid}</td>
+                <td className="py-3 px-6">
+                  {s.role === 'phlebotomist' ? (
+                    <button
+                      onClick={() => startEditingSchedule(s)}
+                      className="text-[10px] font-bold uppercase tracking-wider px-3 py-1 rounded-md bg-slate-100 text-text-dark hover:bg-slate-200 transition-colors"
+                    >
+                      {editingScheduleUid === s.uid ? 'Editing…' : 'Edit Schedule'}
+                    </button>
+                  ) : (
+                    <span className="text-[10px] text-text-muted italic">—</span>
                   )}
-                >
-                  {s.active ? 'Active' : 'Inactive'}
-                </button>
-              </td>
-            </tr>
+                </td>
+                <td className="py-3 px-6 text-right">
+                  <button
+                    onClick={() => toggleActive(s)}
+                    className={cn(
+                      "text-[10px] font-bold uppercase tracking-wider px-3 py-1 rounded-full transition-colors",
+                      s.active ? "bg-emerald-100 text-emerald-700 hover:bg-emerald-200" : "bg-slate-100 text-slate-500 hover:bg-slate-200"
+                    )}
+                  >
+                    {s.active ? 'Active' : 'Inactive'}
+                  </button>
+                </td>
+              </tr>
+              {editingScheduleUid === s.uid && (
+                <tr className="bg-blue-50/40">
+                  <td colSpan={6} className="px-6 py-4">
+                    <DefaultScheduleEditor
+                      value={editingScheduleDraft}
+                      templateSlots={config.slots}
+                      onChange={setEditingScheduleDraft}
+                    />
+                    <div className="flex items-center justify-end gap-2 mt-3">
+                      <button
+                        onClick={() => setEditingScheduleUid(null)}
+                        className="px-3 py-1.5 text-[11px] font-bold uppercase tracking-wider rounded-lg border border-border-subtle text-text-muted hover:bg-white transition-colors"
+                      >
+                        Cancel
+                      </button>
+                      <button
+                        onClick={() => saveSchedule(s.uid)}
+                        disabled={savingSchedule}
+                        className="px-3 py-1.5 text-[11px] font-bold uppercase tracking-wider rounded-lg bg-primary text-white hover:opacity-90 transition-opacity disabled:opacity-50"
+                      >
+                        {savingSchedule ? 'Saving…' : 'Save Schedule'}
+                      </button>
+                    </div>
+                  </td>
+                </tr>
+              )}
+            </React.Fragment>
           ))}
         </tbody>
       </table>
+    </div>
+  );
+}
+
+// --- DEFAULT SCHEDULE EDITOR ---
+//
+// 7-row × N-slot checkbox grid for a phlebotomist's weekly default schedule.
+// Each column is a slot from the current booking template; each row is a weekday.
+// Pure controlled component — parent owns the WeeklySchedule state.
+const WEEKDAY_LABELS: { key: keyof WeeklySchedule; label: string }[] = [
+  { key: 'mon', label: 'Mon' },
+  { key: 'tue', label: 'Tue' },
+  { key: 'wed', label: 'Wed' },
+  { key: 'thu', label: 'Thu' },
+  { key: 'fri', label: 'Fri' },
+  { key: 'sat', label: 'Sat' },
+  { key: 'sun', label: 'Sun' },
+];
+
+function DefaultScheduleEditor({
+  value,
+  templateSlots,
+  onChange,
+}: {
+  value: WeeklySchedule;
+  templateSlots: SlotConfig[];
+  onChange: (next: WeeklySchedule) => void;
+}) {
+  const toggleCell = (day: keyof WeeklySchedule, slotStart: string) => {
+    const current = value[day] ?? [];
+    const has = current.includes(slotStart);
+    const next = has ? current.filter(s => s !== slotStart) : [...current, slotStart].sort();
+    onChange({ ...value, [day]: next });
+  };
+
+  const fillRow = (day: keyof WeeklySchedule) => {
+    onChange({ ...value, [day]: templateSlots.map(s => s.start) });
+  };
+  const clearRow = (day: keyof WeeklySchedule) => {
+    onChange({ ...value, [day]: [] });
+  };
+
+  return (
+    <div className="space-y-2">
+      <div className="flex items-center justify-between">
+        <div className="text-[10px] text-text-muted uppercase tracking-widest font-bold">
+          Default weekly schedule
+        </div>
+        <div className="text-[10px] text-text-muted">
+          Per-date exceptions live in the Schedule tab.
+        </div>
+      </div>
+      <div className="overflow-x-auto">
+        <table className="text-xs w-full">
+          <thead>
+            <tr>
+              <th className="text-left py-2 pr-3 text-[10px] font-black text-text-muted uppercase tracking-widest">Day</th>
+              {templateSlots.map(s => (
+                <th key={s.start} className="text-center py-2 px-2 text-[10px] font-bold text-text-dark whitespace-nowrap">
+                  {formatSlotLabel(s)}
+                </th>
+              ))}
+              <th className="text-right py-2 pl-3 text-[10px] font-black text-text-muted uppercase tracking-widest">Quick</th>
+            </tr>
+          </thead>
+          <tbody className="divide-y divide-border-subtle">
+            {WEEKDAY_LABELS.map(({ key, label }) => {
+              const cells = value[key] ?? [];
+              return (
+                <tr key={key}>
+                  <td className="py-1.5 pr-3 font-bold text-text-dark text-xs">{label}</td>
+                  {templateSlots.map(s => (
+                    <td key={s.start} className="py-1.5 px-2 text-center">
+                      <input
+                        type="checkbox"
+                        checked={cells.includes(s.start)}
+                        onChange={() => toggleCell(key, s.start)}
+                        className="w-4 h-4 accent-primary cursor-pointer"
+                      />
+                    </td>
+                  ))}
+                  <td className="py-1.5 pl-3 text-right whitespace-nowrap">
+                    <button
+                      onClick={() => fillRow(key)}
+                      className="text-[9px] font-bold uppercase tracking-widest text-primary hover:underline"
+                    >
+                      All
+                    </button>
+                    <span className="text-text-muted px-1">·</span>
+                    <button
+                      onClick={() => clearRow(key)}
+                      className="text-[9px] font-bold uppercase tracking-widest text-text-muted hover:underline"
+                    >
+                      Off
+                    </button>
+                  </td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  );
+}
+
+// --- SETTINGS VIEW ---
+//
+// Edits the singleton config/booking doc. Admin-only (gated by firestore rules
+// and by the tab being inside DashboardView).
+function SettingsView({ config, onError }: { config: BookingConfig; onError: (err: Error) => void }) {
+  const [slots, setSlots] = useState<SlotConfig[]>(config.slots);
+  const [maxAdvanceDays, setMaxAdvanceDays] = useState<number>(config.maxAdvanceDays);
+  const [saving, setSaving] = useState(false);
+  const [dirty, setDirty] = useState(false);
+  const [savedFlash, setSavedFlash] = useState(false);
+
+  // When the prop refreshes (live snapshot), pull the new values in unless
+  // the user has unsaved local edits.
+  useEffect(() => {
+    if (!dirty) {
+      setSlots(config.slots);
+      setMaxAdvanceDays(config.maxAdvanceDays);
+    }
+  }, [config, dirty]);
+
+  const validation = useMemo<string | null>(() => {
+    if (slots.length === 0) return 'At least one slot is required.';
+    const re = /^([01]\d|2[0-3]):[0-5]\d$/;
+    for (let i = 0; i < slots.length; i++) {
+      const s = slots[i];
+      if (!re.test(s.start) || !re.test(s.end)) {
+        return `Slot ${i + 1}: times must be HH:mm (24-hour).`;
+      }
+      if (s.start >= s.end) return `Slot ${i + 1}: end must be after start.`;
+      if (i > 0 && s.start < slots[i - 1].end) {
+        return `Slot ${i + 1}: overlaps with slot ${i}.`;
+      }
+    }
+    if (!Number.isInteger(maxAdvanceDays) || maxAdvanceDays < 1 || maxAdvanceDays > 30) {
+      return 'Max advance days must be a whole number between 1 and 30.';
+    }
+    return null;
+  }, [slots, maxAdvanceDays]);
+
+  const addSlot = () => {
+    const last = slots[slots.length - 1];
+    const nextStart = last ? last.end : '07:00';
+    const nextEnd = bumpHour(nextStart);
+    setSlots([...slots, { start: nextStart, end: nextEnd }]);
+    setDirty(true);
+  };
+  const updateSlot = (i: number, patch: Partial<SlotConfig>) => {
+    const next = slots.slice();
+    next[i] = { ...next[i], ...patch };
+    setSlots(next);
+    setDirty(true);
+  };
+  const removeSlot = (i: number) => {
+    setSlots(slots.filter((_, j) => j !== i));
+    setDirty(true);
+  };
+
+  const save = async () => {
+    if (validation) return;
+    setSaving(true);
+    try {
+      await setDoc(doc(db, 'config', 'booking'), {
+        slots,
+        maxAdvanceDays,
+        timezone: config.timezone || 'Asia/Kolkata',
+        updatedAt: new Date().toISOString(),
+        updatedBy: auth.currentUser?.uid || null,
+      }, { merge: true });
+      invalidateBookingConfigCache();
+      setDirty(false);
+      setSavedFlash(true);
+      setTimeout(() => setSavedFlash(false), 1800);
+    } catch (e) {
+      try { handleFirestoreError(e, OperationType.WRITE, 'config/booking'); }
+      catch (err: any) { onError(err); }
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <div className="bg-white rounded-xl border border-border-subtle overflow-hidden">
+      <div className="p-4 border-b border-border-subtle bg-slate-50/50 flex items-center justify-between">
+        <div>
+          <h3 className="font-bold text-text-dark flex items-center gap-2">
+            <Settings className="w-4 h-4" /> Booking Settings
+          </h3>
+          <p className="text-xs text-text-muted">Slot template and how far ahead customers can book.</p>
+        </div>
+        <div className="flex items-center gap-3">
+          {savedFlash && (
+            <span className="text-[10px] font-bold text-emerald-600 uppercase tracking-widest flex items-center gap-1">
+              <CheckCircle className="w-3 h-3" /> Saved
+            </span>
+          )}
+          <button
+            onClick={save}
+            disabled={saving || !!validation || !dirty}
+            className="px-4 py-2 bg-primary text-white text-[11px] font-bold uppercase tracking-wider rounded-lg hover:opacity-90 transition-opacity disabled:opacity-50"
+          >
+            {saving ? 'Saving…' : 'Save Settings'}
+          </button>
+        </div>
+      </div>
+
+      <div className="p-5 space-y-6">
+        <section>
+          <div className="flex items-center justify-between mb-3">
+            <h4 className="text-[10px] font-black text-text-muted uppercase tracking-widest">Slot Template</h4>
+            <button
+              onClick={addSlot}
+              className="text-[10px] font-bold text-primary hover:underline flex items-center gap-1"
+            >
+              <Plus className="w-3 h-3" /> Add slot
+            </button>
+          </div>
+          <div className="space-y-2">
+            {slots.length === 0 && (
+              <div className="text-xs text-text-muted italic">No slots configured.</div>
+            )}
+            {slots.map((s, i) => (
+              <div key={i} className="flex items-center gap-3 bg-slate-50 border border-border-subtle rounded-lg px-3 py-2">
+                <span className="text-[10px] font-bold text-text-muted w-6">#{i + 1}</span>
+                <input
+                  type="time"
+                  value={s.start}
+                  onChange={(e) => updateSlot(i, { start: e.target.value })}
+                  className="px-2 py-1 border border-border-subtle rounded text-sm outline-none focus:border-primary bg-white"
+                />
+                <span className="text-text-muted text-sm">→</span>
+                <input
+                  type="time"
+                  value={s.end}
+                  onChange={(e) => updateSlot(i, { end: e.target.value })}
+                  className="px-2 py-1 border border-border-subtle rounded text-sm outline-none focus:border-primary bg-white"
+                />
+                <span className="text-[10px] text-text-muted ml-2 flex-1">
+                  {/^([01]\d|2[0-3]):[0-5]\d$/.test(s.start) && /^([01]\d|2[0-3]):[0-5]\d$/.test(s.end)
+                    ? formatSlotLabel(s)
+                    : '—'}
+                </span>
+                <button
+                  onClick={() => removeSlot(i)}
+                  title="Remove slot"
+                  className="p-1.5 rounded hover:bg-red-50 text-red-500 transition-colors"
+                >
+                  <Trash2 className="w-3.5 h-3.5" />
+                </button>
+              </div>
+            ))}
+          </div>
+        </section>
+
+        <section>
+          <h4 className="text-[10px] font-black text-text-muted uppercase tracking-widest mb-3">Booking Window</h4>
+          <div className="flex items-center gap-3">
+            <span className="text-xs font-bold text-text-dark">Customers can book up to</span>
+            <input
+              type="number"
+              min={1}
+              max={30}
+              value={maxAdvanceDays}
+              onChange={(e) => { setMaxAdvanceDays(Number(e.target.value)); setDirty(true); }}
+              className="px-2 py-1 w-20 border border-border-subtle rounded text-sm outline-none focus:border-primary bg-white text-center"
+            />
+            <span className="text-xs font-bold text-text-dark">days ahead.</span>
+          </div>
+        </section>
+
+        {validation && (
+          <div className="text-[11px] font-bold text-red-600 bg-red-50 border border-red-100 rounded-lg px-3 py-2 flex items-center gap-2">
+            <AlertTriangle className="w-3.5 h-3.5" />
+            {validation}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function bumpHour(time: string): string {
+  const [h, m] = time.split(':').map(Number);
+  const total = (h * 60 + (m || 0) + 60) % (24 * 60);
+  const nh = Math.floor(total / 60);
+  const nm = total % 60;
+  return `${String(nh).padStart(2, '0')}:${String(nm).padStart(2, '0')}`;
+}
+
+// --- SCHEDULE VIEW ---
+//
+// Per-date, per-phlebotomist availability grid. Override docs live at
+// phlebAvailability/{YYYY-MM-DD}_{phlebUid} and are sparse — absence means
+// the staff.defaultSchedule applies.
+function ScheduleView({
+  staff,
+  config,
+  bookings,
+  onError,
+}: {
+  staff: Staff[];
+  config: BookingConfig;
+  bookings: Booking[];
+  onError: (err: Error) => void;
+}) {
+  const dateOptions = useMemo(() => getNextNDates(14), []);
+  const [selectedDate, setSelectedDate] = useState<string>(dateOptions[0]);
+  const [overrides, setOverrides] = useState<Record<string, PhlebAvailability>>({});
+
+  useEffect(() => {
+    const qAvail = query(collection(db, 'phlebAvailability'), where('date', '==', selectedDate));
+    return onSnapshot(
+      qAvail,
+      (snap) => {
+        const map: Record<string, PhlebAvailability> = {};
+        snap.docs.forEach(d => {
+          const data = d.data() as PhlebAvailability;
+          if (data.phlebotomistUid) map[data.phlebotomistUid] = data;
+        });
+        setOverrides(map);
+      },
+      (error) => {
+        try { handleFirestoreError(error, OperationType.LIST, 'phlebAvailability'); }
+        catch (e: any) { onError(e); }
+      }
+    );
+  }, [selectedDate, onError]);
+
+  const activePhlebs = useMemo(
+    () => staff.filter(s => s.role === 'phlebotomist' && s.active),
+    [staff]
+  );
+
+  const bookingAt = (phlebUid: string, slotStart: string): Booking | null => {
+    return bookings.find(b =>
+      b.assignedTo === phlebUid &&
+      b.bookingDate === selectedDate &&
+      b.slotStart === slotStart &&
+      b.status !== 'Completed'
+    ) || null;
+  };
+
+  // Off-template slots: bookings on this date with a slotStart that isn't in
+  // the current template. Surfaced as a separate row in the grid header.
+  const offTemplateSlotStarts = useMemo(() => {
+    const templateStarts = new Set(config.slots.map(s => s.start));
+    const set = new Set<string>();
+    bookings.forEach(b => {
+      if (b.bookingDate === selectedDate && b.slotStart && !templateStarts.has(b.slotStart) && b.status !== 'Completed') {
+        set.add(b.slotStart);
+      }
+    });
+    return Array.from(set).sort();
+  }, [bookings, selectedDate, config.slots]);
+
+  const writeOverride = async (phleb: Staff, payload: Partial<PhlebAvailability>) => {
+    const docId = phlebAvailabilityDocId(selectedDate, phleb.uid);
+    try {
+      await setDoc(doc(db, 'phlebAvailability', docId), {
+        date: selectedDate,
+        phlebotomistUid: phleb.uid,
+        phlebotomistName: phleb.name,
+        ...payload,
+        updatedAt: new Date().toISOString(),
+        updatedBy: auth.currentUser?.uid || null,
+      }, { merge: true });
+    } catch (e) {
+      try { handleFirestoreError(e, OperationType.WRITE, `phlebAvailability/${docId}`); }
+      catch (err: any) { onError(err); }
+    }
+  };
+
+  const toggleSlot = async (phleb: Staff, slotStart: string) => {
+    const current = effectiveSlotsFromDocs(phleb, overrides[phleb.uid] ?? null, selectedDate);
+    const isOn = current.includes(slotStart);
+    if (isOn) {
+      const conflict = bookingAt(phleb.uid, slotStart);
+      if (conflict) {
+        alert(`Cannot remove this slot — ${phleb.name} has booking ${conflict.bookingId} (${conflict.patientName}) on it. Reassign first.`);
+        return;
+      }
+    }
+    const nextSlots = isOn
+      ? current.filter(s => s !== slotStart)
+      : [...current, slotStart].sort();
+    await writeOverride(phleb, {
+      workingSlots: nextSlots,
+      unavailable: false,
+    });
+  };
+
+  const markDayOff = async (phleb: Staff) => {
+    // Block if any active booking exists on this date for this phleb.
+    const conflict = bookings.find(b =>
+      b.assignedTo === phleb.uid &&
+      b.bookingDate === selectedDate &&
+      b.status !== 'Completed'
+    );
+    if (conflict) {
+      alert(`Cannot mark day off — ${phleb.name} has booking ${conflict.bookingId} on ${selectedDate}. Reassign first.`);
+      return;
+    }
+    await writeOverride(phleb, { workingSlots: [], unavailable: true });
+  };
+
+  const resetToDefault = async (phleb: Staff) => {
+    const docId = phlebAvailabilityDocId(selectedDate, phleb.uid);
+    try {
+      await deleteDoc(doc(db, 'phlebAvailability', docId));
+    } catch (e) {
+      // "Not found" is fine — no override existed.
+      const msg = e instanceof Error ? e.message : String(e);
+      if (!msg.toLowerCase().includes('not-found')) {
+        try { handleFirestoreError(e, OperationType.DELETE, `phlebAvailability/${docId}`); }
+        catch (err: any) { onError(err); }
+      }
+    }
+  };
+
+  return (
+    <div className="bg-white rounded-xl border border-border-subtle overflow-hidden">
+      <div className="p-4 border-b border-border-subtle bg-slate-50/50">
+        <h3 className="font-bold text-text-dark flex items-center gap-2">
+          <Calendar className="w-4 h-4" /> Phlebotomist Schedule
+        </h3>
+        <p className="text-xs text-text-muted">Per-date availability. Empty doc = staff default schedule applies.</p>
+      </div>
+
+      <div className="p-4 border-b border-border-subtle bg-white">
+        <div className="text-[10px] font-black text-text-muted uppercase tracking-widest mb-2">Date</div>
+        <div className="flex items-center gap-1.5 overflow-x-auto pb-1">
+          {dateOptions.map(d => (
+            <button
+              key={d}
+              onClick={() => setSelectedDate(d)}
+              className={cn(
+                "px-3 py-1.5 rounded-lg text-[11px] font-bold whitespace-nowrap border transition-colors",
+                selectedDate === d
+                  ? "bg-primary text-white border-primary"
+                  : "bg-white text-text-dark border-border-subtle hover:bg-slate-50"
+              )}
+            >
+              {formatDateLabel(d, 'en')}
+            </button>
+          ))}
+        </div>
+      </div>
+
+      <div className="overflow-x-auto">
+        <table className="w-full">
+          <thead>
+            <tr className="bg-slate-50 border-b border-border-subtle">
+              <th className="text-left py-3 px-4 text-[10px] font-black text-text-muted uppercase tracking-widest">Phlebotomist</th>
+              {config.slots.map(s => (
+                <th key={s.start} className="text-center py-3 px-2 text-[10px] font-bold text-text-dark whitespace-nowrap">
+                  {formatSlotLabel(s)}
+                </th>
+              ))}
+              {offTemplateSlotStarts.map(start => (
+                <th key={`off-${start}`} className="text-center py-3 px-2 text-[10px] font-bold text-amber-700 whitespace-nowrap" title="Off-template slot — booking exists but not in current template">
+                  {start} <span className="ml-1 text-[9px] font-black bg-amber-100 px-1 rounded">OFF-TEMPLATE</span>
+                </th>
+              ))}
+              <th className="text-right py-3 px-4 text-[10px] font-black text-text-muted uppercase tracking-widest">Actions</th>
+            </tr>
+          </thead>
+          <tbody className="divide-y divide-border-subtle">
+            {activePhlebs.length === 0 ? (
+              <tr>
+                <td colSpan={2 + config.slots.length + offTemplateSlotStarts.length} className="py-10 text-center text-text-muted text-xs">
+                  No active phlebotomists. Add one in the Staff tab.
+                </td>
+              </tr>
+            ) : activePhlebs.map(p => {
+              const override = overrides[p.uid] ?? null;
+              const effective = effectiveSlotsFromDocs(p, override, selectedDate);
+              const dayOff = override?.unavailable === true;
+              return (
+                <tr key={p.uid} className="hover:bg-slate-50/40">
+                  <td className="py-3 px-4">
+                    <div className="text-sm font-bold text-text-dark">{p.name}</div>
+                    <div className="text-[10px] text-text-muted">
+                      {override ? (
+                        <span className="text-amber-700 font-bold">Override active</span>
+                      ) : (
+                        <span>Using default ({weekdayKey(selectedDate)})</span>
+                      )}
+                    </div>
+                  </td>
+                  {config.slots.map(s => {
+                    const isOn = !dayOff && effective.includes(s.start);
+                    const conflict = isOn ? bookingAt(p.uid, s.start) : null;
+                    return (
+                      <td key={s.start} className="text-center py-3 px-2">
+                        <button
+                          onClick={() => toggleSlot(p, s.start)}
+                          disabled={dayOff}
+                          title={conflict ? `Booking ${conflict.bookingId} assigned here` : isOn ? 'Working — click to remove' : 'Off — click to add'}
+                          className={cn(
+                            "w-7 h-7 rounded-md border-2 transition-colors inline-flex items-center justify-center",
+                            dayOff
+                              ? "border-slate-200 bg-slate-100 text-slate-300 cursor-not-allowed"
+                              : isOn
+                                ? conflict
+                                  ? "border-amber-400 bg-amber-50 text-amber-700"
+                                  : "border-emerald-500 bg-emerald-50 text-emerald-700 hover:bg-emerald-100"
+                                : "border-border-subtle bg-white text-text-muted hover:bg-slate-50"
+                          )}
+                        >
+                          {isOn ? <CheckCircle className="w-4 h-4" /> : null}
+                        </button>
+                      </td>
+                    );
+                  })}
+                  {offTemplateSlotStarts.map(start => {
+                    const conflict = bookingAt(p.uid, start);
+                    return (
+                      <td key={`off-${p.uid}-${start}`} className="text-center py-3 px-2">
+                        {conflict ? (
+                          <span title={`Booking ${conflict.bookingId}`} className="inline-flex items-center justify-center w-7 h-7 rounded-md border-2 border-amber-400 bg-amber-50 text-amber-700">
+                            <CheckCircle className="w-4 h-4" />
+                          </span>
+                        ) : (
+                          <span className="text-text-muted text-xs">—</span>
+                        )}
+                      </td>
+                    );
+                  })}
+                  <td className="py-3 px-4 text-right whitespace-nowrap">
+                    {dayOff ? (
+                      <span className="text-[10px] font-black bg-red-100 text-red-700 px-2 py-0.5 rounded uppercase tracking-widest">
+                        Day off
+                      </span>
+                    ) : (
+                      <button
+                        onClick={() => markDayOff(p)}
+                        className="text-[10px] font-bold uppercase tracking-wider text-red-600 hover:underline mr-3"
+                      >
+                        Day off
+                      </button>
+                    )}
+                    {override && (
+                      <button
+                        onClick={() => resetToDefault(p)}
+                        className="text-[10px] font-bold uppercase tracking-wider text-primary hover:underline"
+                      >
+                        Reset to default
+                      </button>
+                    )}
+                  </td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      </div>
     </div>
   );
 }
@@ -1132,7 +1981,18 @@ function PhlebotomistDashboard({ user, onError }: { user: FirebaseUser; onError:
     const qMine = query(collection(db, 'bookings'), where('assignedTo', '==', user.uid));
     return onSnapshot(qMine, (snap) => {
       const data = snap.docs.map(d => ({ ...d.data(), bookingId: d.id } as Booking));
-      data.sort((a, b) => (a.timeSlot || '').localeCompare(b.timeSlot || ''));
+      // Primary sort: bookingDate ASC, then slotStart ASC. Legacy (no bookingDate)
+      // sinks to the bottom, ordered by timeSlot for stability.
+      data.sort((a, b) => {
+        if (a.bookingDate && b.bookingDate) {
+          const dCmp = a.bookingDate.localeCompare(b.bookingDate);
+          if (dCmp !== 0) return dCmp;
+          return (a.slotStart || '').localeCompare(b.slotStart || '');
+        }
+        if (a.bookingDate) return -1;
+        if (b.bookingDate) return 1;
+        return (a.timeSlot || '').localeCompare(b.timeSlot || '');
+      });
       setMyBookings(data);
     }, (error) => {
       try { handleFirestoreError(error, OperationType.LIST, 'bookings (assigned)'); }
@@ -1155,11 +2015,15 @@ function PhlebotomistDashboard({ user, onError }: { user: FirebaseUser; onError:
     });
   }, [onError]);
 
-  const todayISO = new Date().toISOString().slice(0, 10);
+  const todayISO = getISTToday();
   const active = myBookings.filter(b => b.status === 'Assigned' || b.status === 'Collected' || b.status === 'Processing');
-  const completedToday = myBookings.filter(b =>
-    b.status === 'Completed' && String(b.createdAt || '').slice(0, 10) === todayISO
-  );
+  const completedToday = myBookings.filter(b => {
+    if (b.status !== 'Completed') return false;
+    // Prefer bookingDate (the day the visit was scheduled for); fall back to
+    // createdAt for legacy bookings without a date.
+    if (b.bookingDate) return b.bookingDate === todayISO;
+    return String(b.createdAt || '').slice(0, 10) === todayISO;
+  });
 
   const selfAssign = async (b: Booking) => {
     try {
@@ -1332,6 +2196,17 @@ function PhlebBookingCard({
               <a href={`tel:${booking.patientPhone}`} className="flex items-center gap-1 hover:text-primary">
                 <Phone className="w-3 h-3" /> {booking.patientPhone || 'no phone'}
               </a>
+              <span className="flex items-center gap-1">
+                <Calendar className="w-3 h-3" />
+                {booking.bookingDate ? (
+                  <span className="text-text-dark font-bold">{formatDateLabel(booking.bookingDate, 'en')}</span>
+                ) : (
+                  <>
+                    <span>—</span>
+                    <span className="text-[9px] font-black bg-amber-100 text-amber-700 px-1 py-0.5 rounded uppercase tracking-widest">Legacy</span>
+                  </>
+                )}
+              </span>
               <span className="flex items-center gap-1">
                 <Clock className="w-3 h-3" /> {booking.timeSlot || 'no slot'}
               </span>
@@ -1578,6 +2453,7 @@ function WhatsAppSimulator({ userId }: { userId: string }) {
   const mountTimeRef = useRef(new Date());
 
   const t = language ? TRANSLATIONS[language] : TRANSLATIONS['en'];
+  const config = useBookingConfig();
 
   const resetSimulator = (quiet = false) => {
     setMessages([]);
@@ -2079,23 +2955,50 @@ function WhatsAppSimulator({ userId }: { userId: string }) {
                 console.error('[Simulator] Failed to update address on patient', e);
               }
             }
-            setStep('TIME_SLOT');
-            addBotMessage(t.timeSlot, [...t.slots, t.backToMainMenu]);
+            const dates = getNextNDates(config.maxAdvanceDays);
+            const dateLabels = dates.map(d => formatDateLabel(d, language || 'en'));
+            setStep('DATE_SELECTION');
+            addBotMessage(t.chooseDate, [...dateLabels, t.cancelBooking]);
           } else {
             setStep('PATIENT_ADDRESS');
             addBotMessage(t.patientAddress, [t.backToMainMenu], true);
           }
           break;
 
-        case 'TIME_SLOT':
-          if (!t.slots.includes(value)) {
-            addBotMessage(t.timeSlot, [...t.slots, t.backToMainMenu]);
+        case 'DATE_SELECTION': {
+          const dates = getNextNDates(config.maxAdvanceDays);
+          const dateLabels = dates.map(d => formatDateLabel(d, language || 'en'));
+          const dIdx = dateLabels.indexOf(value);
+          if (dIdx >= 0) {
+            setBookingData(prev => ({ ...prev, bookingDate: dates[dIdx] }));
+            const slotLabels = config.slots.map(s => formatSlotLabel(s, language || 'en'));
+            setStep('TIME_SLOT');
+            addBotMessage(t.timeSlot, [...slotLabels, t.cancelBooking]);
+          } else {
+            const advanceMsg = t.advanceLimitError.replace('{n}', String(config.maxAdvanceDays));
+            addBotMessage(`${advanceMsg}\n\n${t.chooseDate}`, [...dateLabels, t.cancelBooking]);
+          }
+          break;
+        }
+
+        case 'TIME_SLOT': {
+          const slotLabels = config.slots.map(s => formatSlotLabel(s, language || 'en'));
+          const sIdx = slotLabels.indexOf(value);
+          if (sIdx < 0) {
+            addBotMessage(t.timeSlot, [...slotLabels, t.cancelBooking]);
             return;
           }
-          setBookingData(prev => ({ ...prev, timeSlot: value }));
+          const slot = config.slots[sIdx];
+          setBookingData(prev => ({
+            ...prev,
+            slotStart: slot.start,
+            slotEnd: slot.end,
+            timeSlot: value,
+          }));
           setStep('FASTING_CHECK');
           addBotMessage(t.fastingCheck, ['Yes / അതെ', 'No / ഇല്ല']);
           break;
+        }
 
         case 'FASTING_CHECK':
           setBookingData(prev => ({ ...prev, isFastingConfirmed: value.includes('Yes') }));
@@ -2110,6 +3013,9 @@ function WhatsAppSimulator({ userId }: { userId: string }) {
           // Re-calculate price to ensure accuracy
           const finalPrice = (bookingData.testNames || []).reduce((sum, test) => sum + (TEST_PRICES[test] || 0), 0);
           
+          const dateLabel = bookingData.bookingDate
+            ? formatDateLabel(bookingData.bookingDate, language || 'en')
+            : '—';
           const summary = `
             *${t.confirmHeader}*\n
             Tests: ${(bookingData.testNames || []).join(', ')}\n
@@ -2117,6 +3023,7 @@ function WhatsAppSimulator({ userId }: { userId: string }) {
             Patient: ${bookingData.patientName} (${bookingData.patientAge})\n
             Gender: ${bookingData.patientGender}\n
             Address: ${bookingData.patientAddress}\n
+            Date: ${dateLabel}\n
             Slot: ${bookingData.timeSlot}\n
             Fasting: ${bookingData.isFastingConfirmed ? 'Yes' : 'No'}\n
             Notes: ${notesText || 'None'}

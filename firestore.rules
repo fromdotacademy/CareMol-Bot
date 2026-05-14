@@ -68,6 +68,15 @@ service cloud.firestore {
       }
     }
 
+    // Collection-group rule for patients. Required for queries like
+    // `collectionGroup(db, 'patients')` which the admin dashboard uses to list
+    // every user's saved patient profiles across all parents. The doc-level
+    // rule above is still authoritative for path-bound reads/writes; this rule
+    // is read-only and only widens the scope to enable group queries.
+    match /{path=**}/patients/{patientId} {
+      allow read: if isAdmin() || (isSignedIn() && resource.data.userId == request.auth.uid);
+    }
+
     match /bookings/{bookingId} {
       // Read: admin (any), owner (own bookings), phlebotomist (assigned to them OR
       // unclaimed queue of Created bookings to enable self-assignment).
@@ -82,11 +91,12 @@ service cloud.firestore {
         // Owner: edit details only while still 'Created'.
         (isSignedIn() && existing().userId == request.auth.uid &&
          existing().status == 'Created' &&
-         incoming().diff(existing()).affectedKeys().hasOnly(['patientName', 'patientAge', 'patientGender', 'patientAddress', 'patientPhone', 'testNames', 'timeSlot', 'isFastingConfirmed', 'price']) &&
+         incoming().diff(existing()).affectedKeys().hasOnly(['patientName', 'patientAge', 'patientGender', 'patientAddress', 'patientPhone', 'testNames', 'timeSlot', 'bookingDate', 'slotStart', 'slotEnd', 'isFastingConfirmed', 'price']) &&
          isValidBooking(incoming()))
       ) || (
-        // Admin: status, price, assignedTo (incl. reassignment) and explicit priority.
-        isAdmin() && incoming().diff(existing()).affectedKeys().hasOnly(['status', 'price', 'assignedTo', 'assignedToName', 'priority', 'testNames', 'notes'])
+        // Admin: status, price, assignedTo (incl. reassignment), priority, and
+        // date/slot rescheduling.
+        isAdmin() && incoming().diff(existing()).affectedKeys().hasOnly(['status', 'price', 'assignedTo', 'assignedToName', 'priority', 'testNames', 'notes', 'bookingDate', 'slotStart', 'slotEnd', 'timeSlot'])
       ) || (
         // Phlebotomist: self-assign an unclaimed 'Created' booking.
         isPhlebotomist() &&
@@ -114,6 +124,22 @@ service cloud.firestore {
       // Staff members can read their own record (so the app can detect their role).
       allow get: if isOwner(uid) || isAdmin();
       allow list: if isAdmin();
+      allow create, update, delete: if isAdmin();
+    }
+
+    // Booking configuration (slot template, max advance days). Singleton at
+    // config/booking. Readable by any signed-in user so the bot session and the
+    // in-dashboard simulator can render the slot picker. Admin-only writes.
+    match /config/{document} {
+      allow get: if isSignedIn();
+      allow list, create, update, delete: if isAdmin();
+    }
+
+    // Per-phlebotomist per-date availability overrides. Doc id is
+    // {YYYY-MM-DD}_{phlebUid}. Default schedule lives on staff/{uid}; this
+    // collection only stores deviations.
+    match /phlebAvailability/{document} {
+      allow get, list: if isAdmin() || isPhlebotomist();
       allow create, update, delete: if isAdmin();
     }
   }

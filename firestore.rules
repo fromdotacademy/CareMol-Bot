@@ -68,6 +68,11 @@ service cloud.firestore {
       }
     }
 
+    // Collection group rule required for admin collectionGroup('patients') query.
+    match /{path=**}/patients/{patientId} {
+      allow read: if isAdmin();
+    }
+
     match /bookings/{bookingId} {
       // Read: admin (any), owner (own bookings), phlebotomist (assigned to them OR
       // unclaimed queue of Created bookings to enable self-assignment).

@@ -246,12 +246,16 @@ export default function App() {
     });
   }, []);
 
+  const [loginError, setLoginError] = React.useState<string | null>(null);
+
   const loginWithGoogle = async () => {
+    setLoginError(null);
     try {
       const provider = new GoogleAuthProvider();
       await signInWithPopup(auth, provider);
-    } catch (e) {
+    } catch (e: any) {
       console.error(e);
+      setLoginError(e?.message || String(e));
     }
   };
 
@@ -294,6 +298,9 @@ export default function App() {
               <img src="https://www.gstatic.com/firebasejs/ui/2.0.0/images/auth/google.svg" className="w-6 h-6 bg-white p-0.5 rounded" alt="Google" />
               Sign in with Google
             </button>
+            {loginError && (
+              <p className="mt-4 text-red-600 text-sm bg-red-50 border border-red-200 rounded-xl px-4 py-3 max-w-md text-left break-all">{loginError}</p>
+            )}
           </div>
         ) : (
           <>

@@ -1643,7 +1643,7 @@ function WhatsAppSimulator({ userId }: { userId: string }) {
       );
     } else {
       addBotMessage(
-        "👋 Welcome to CareMol – Care Close to You\nPlease select your language / നിങ്ങളുടെ ഭാഷ തിരഞ്ഞെടുക്കുക:",
+        TRANSLATIONS.en.languageSelectPrompt,
         ['English', 'മലയാളം']
       );
     }
@@ -1731,14 +1731,16 @@ function WhatsAppSimulator({ userId }: { userId: string }) {
       return;
     }
 
-    const isMenuCommand = 
-      value === t.mainMenu || 
+    const isMenuCommand =
+      value === t.mainMenu ||
       value === t.backToMainMenu ||
       value === t.options.book ||
       value === t.options.packages ||
-      value === t.options.availability ||
+      value === t.options.medicine ||
+      value === t.options.faq ||
+      value === t.options.call ||
       value === t.options.support ||
-      value === 'Back to Menu' || 
+      value === 'Back to Menu' ||
       value === 'തിരികെ' ||
       ['menu', 'home', 'restart'].includes(normalizedVal);
 
@@ -1762,10 +1764,31 @@ function WhatsAppSimulator({ userId }: { userId: string }) {
         return;
       }
 
-      if (value === t.options.availability) {
-        setIsOnlyChecking(true);
-        setStep('AVAILABILITY_CHECK');
-        addBotMessage(t.askLocation, [t.backToMainMenu], true);
+      if (value === t.options.medicine) {
+        setStep('MEDICINE_DELIVERY');
+        addBotMessage(t.medicineComingSoon, [t.backToMainMenu, t.options.support]);
+        return;
+      }
+
+      if (value === t.options.faq) {
+        setStep('FAQ');
+        addBotMessage(t.faqHeader, [...t.faqTopics, t.backToMainMenu]);
+        return;
+      }
+
+      if (value === t.options.call) {
+        const phone = (import.meta as any).env?.VITE_CAREMOL_PHONE || '919000000000';
+        setStep('MAIN_MENU');
+        addBotMessage(t.callCaremolMessage.replace(/\{phone\}/g, phone), [t.backToMainMenu]);
+        return;
+      }
+
+      if (value === t.options.support) {
+        const phone = (import.meta as any).env?.VITE_CAREMOL_PHONE || '919000000000';
+        const message = encodeURIComponent("Hello CareMol, I need support with my booking.");
+        window.open(`https://wa.me/${phone}?text=${message}`, '_blank');
+        setStep('MAIN_MENU');
+        addBotMessage(t.supportResponse, [t.backToMainMenu]);
         return;
       }
 
@@ -1823,11 +1846,11 @@ function WhatsAppSimulator({ userId }: { userId: string }) {
             setLanguage(lang);
             const langT = TRANSLATIONS[lang];
             setStep('MAIN_MENU');
-            addBotMessage(`👋 ${langT.welcome}\n${langT.menuHeader}`, (Object.values(langT.options) as string[]).concat([langT.endSession]));
+            addBotMessage(`👋 ${langT.welcome}\n${langT.menuHeader}`, (Object.values(langT.options) as string[]).concat([langT.changeLanguage, langT.endSession]));
           } else {
             // Re-prompt if they typed random text instead of clicking language
             addBotMessage(
-              "Please select your language / നിങ്ങളുടെ ഭാഷ തിരഞ്ഞെടുക്കുക:",
+              t.languageSelectPrompt,
               ['English', 'മലയാളം']
             );
           }
@@ -1847,15 +1870,20 @@ function WhatsAppSimulator({ userId }: { userId: string }) {
           } else if (value === t.options.packages) {
             setStep('PACKAGE_VIEW');
             addBotMessage(t.selectPackageToView, [...t.packagesList, t.backToMainMenu]);
-          } else if (value === t.options.availability) {
-            setIsOnlyChecking(true);
-            setStep('AVAILABILITY_CHECK');
-            addBotMessage(t.askLocation, [t.backToMainMenu], true);
+          } else if (value === t.options.medicine) {
+            setStep('MEDICINE_DELIVERY');
+            addBotMessage(t.medicineComingSoon, [t.backToMainMenu, t.options.support]);
+          } else if (value === t.options.faq) {
+            setStep('FAQ');
+            addBotMessage(t.faqHeader, [...t.faqTopics, t.backToMainMenu]);
+          } else if (value === t.options.call) {
+            const phone = (import.meta as any).env?.VITE_CAREMOL_PHONE || '919000000000';
+            addBotMessage(t.callCaremolMessage.replace(/\{phone\}/g, phone), [t.backToMainMenu]);
           } else if (value === t.options.support) {
-            const supportNumber = "919000000000"; // REPLACE WITH YOUR REAL NUMBER
+            const phone = (import.meta as any).env?.VITE_CAREMOL_PHONE || '919000000000';
             const message = encodeURIComponent("Hello CareMol, I need support with my booking.");
-            window.open(`https://wa.me/${supportNumber}?text=${message}`, '_blank');
-            addBotMessage("Opening WhatsApp support channel...", [t.mainMenu]);
+            window.open(`https://wa.me/${phone}?text=${message}`, '_blank');
+            addBotMessage(t.supportResponse, [t.mainMenu]);
           } else if (value === t.changeLanguage) {
             setStep('LANGUAGE_SELECTION');
             addBotMessage(t.selectLabel, ['English', 'മലയാളം']);
@@ -2114,38 +2142,29 @@ function WhatsAppSimulator({ userId }: { userId: string }) {
           }
           setBookingData(prev => ({ ...prev, timeSlot: value }));
           setStep('FASTING_CHECK');
-          addBotMessage(t.fastingCheck, ['Yes / അതെ', 'No / ഇല്ല']);
+          addBotMessage(t.fastingCheck, [t.yesFasting, t.noFasting]);
           break;
 
         case 'FASTING_CHECK':
-          setBookingData(prev => ({ ...prev, isFastingConfirmed: value.includes('Yes') }));
+          setBookingData(prev => ({ ...prev, isFastingConfirmed: value === t.yesFasting }));
           setStep('NOTES');
           addBotMessage(t.askNotes, [t.none, t.backToMainMenu], true);
           break;
 
         case 'NOTES':
-          const notesText = (value === t.none || value.toLowerCase() === 'none' || value === 'ഇല്ല') ? '' : value;
+          const notesText = (value === t.none || value.toLowerCase() === 'none') ? '' : value;
           setBookingData(prev => ({ ...prev, notes: notesText }));
           setStep('CONFIRMATION');
           // Re-calculate price to ensure accuracy
           const finalPrice = (bookingData.testNames || []).reduce((sum, test) => sum + (TEST_PRICES[test] || 0), 0);
-          
-          const summary = `
-            *${t.confirmHeader}*\n
-            Tests: ${(bookingData.testNames || []).join(', ')}\n
-            Price: ₹${finalPrice}\n
-            Patient: ${bookingData.patientName} (${bookingData.patientAge})\n
-            Gender: ${bookingData.patientGender}\n
-            Address: ${bookingData.patientAddress}\n
-            Slot: ${bookingData.timeSlot}\n
-            Fasting: ${bookingData.isFastingConfirmed ? 'Yes' : 'No'}\n
-            Notes: ${notesText || 'None'}
-          `;
-          addBotMessage(summary, [language === 'en' ? 'Confirm' : 'സ്ഥിരീകരിക്കുക', 'Edit / തിരുത്തുക']);
+
+          const sl = t.summaryLabels;
+          const summary = `*${t.confirmHeader}*\n\n${sl.tests}: ${(bookingData.testNames || []).join(', ')}\n${sl.price}: ₹${finalPrice}\n${sl.patient}: ${bookingData.patientName} (${bookingData.patientAge})\n${sl.address}: ${bookingData.patientAddress}\n${sl.notes}: ${notesText || t.summaryNoneNotes}`;
+          addBotMessage(summary, [t.confirmButton, t.editButton]);
           break;
 
         case 'CONFIRMATION':
-          if (value === 'Confirm' || value === 'സ്ഥിരീകരിക്കുക') {
+          if (value === t.confirmButton) {
             setStep('PAYMENT');
             addBotMessage(t.paymentHeader, t.paymentOptions);
           } else {
@@ -2161,7 +2180,7 @@ function WhatsAppSimulator({ userId }: { userId: string }) {
           // Invariant: patientId is set by PATIENT_DETAILS_ENTRY or PATIENT_SELECTION.
           if (!bookingData.patientId) {
             console.error('[Simulator] PAYMENT step reached without patientId');
-            addBotMessage("❌ Patient details are missing. Please start the booking again.", [t.mainMenu]);
+            addBotMessage(t.bookingDetailsMissing, [t.mainMenu]);
             setStep('MAIN_MENU');
             break;
           }
@@ -2205,7 +2224,7 @@ function WhatsAppSimulator({ userId }: { userId: string }) {
             addBotMessage(receipt, [t.mainMenu, t.endSession]);
           } catch (e) {
             console.error('Save error:', e);
-            addBotMessage("❌ Failed to save booking. Please check permissions.");
+            addBotMessage(t.bookingFailed);
           }
           break;
 
@@ -2221,6 +2240,26 @@ function WhatsAppSimulator({ userId }: { userId: string }) {
             addBotMessage(t.sessionEnded);
           } else {
             addBotMessage(t.phlebMsg, [t.mainMenu, t.endSession]);
+          }
+          break;
+
+        case 'MEDICINE_DELIVERY':
+          // Most exits (Back to Main Menu, Talk to Support) are handled by the global
+          // menu handler above; this fallback covers any unrecognized input.
+          setStep('MAIN_MENU');
+          addBotMessage(t.returningHeader, (Object.values(t.options) as string[]).concat([t.changeLanguage, t.endSession]));
+          break;
+
+        case 'FAQ':
+          if (t.faqTopics.includes(value)) {
+            const answer = t.faqAnswers[value as keyof typeof t.faqAnswers];
+            addBotMessage(answer, [t.moreFaqs, t.options.support, t.backToMainMenu]);
+          } else if (value === t.moreFaqs) {
+            addBotMessage(t.faqHeader, [...t.faqTopics, t.backToMainMenu]);
+          } else {
+            // Unrecognized input — return to main menu
+            setStep('MAIN_MENU');
+            addBotMessage(t.returningHeader, (Object.values(t.options) as string[]).concat([t.changeLanguage, t.endSession]));
           }
           break;
       }

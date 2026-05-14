@@ -70,12 +70,15 @@ export async function handleWhatsAppMessage(from: string, incomingBody: string):
   const normalizedVal = value.toLowerCase();
 
   // Handle Global Actions
-  const isGlobalMenuAction = ['menu', 'home', 'restart'].includes(normalizedVal) || 
-                             value === t.mainMenu || 
+  const isGlobalMenuAction = ['menu', 'home', 'restart'].includes(normalizedVal) ||
+                             value === t.mainMenu ||
                              value === t.backToMainMenu ||
                              value === t.options.book ||
                              value === t.options.packages ||
-                             value === t.options.availability;
+                             value === t.options.medicine ||
+                             value === t.options.faq ||
+                             value === t.options.call ||
+                             value === t.options.support;
 
   if (isGlobalMenuAction) {
     if (value === t.options.book) {
@@ -93,10 +96,19 @@ export async function handleWhatsAppMessage(from: string, incomingBody: string):
     } else if (value === t.options.packages) {
       session.step = 'PACKAGE_VIEW';
       addResponse(t.selectPackageToView, [...t.packagesList, t.backToMainMenu]);
-    } else if (value === t.options.availability) {
-      session.isOnlyChecking = true;
-      session.step = 'AVAILABILITY_CHECK';
-      addResponse(t.askLocation, [t.backToMainMenu]);
+    } else if (value === t.options.medicine) {
+      session.step = 'MEDICINE_DELIVERY';
+      addResponse(t.medicineComingSoon, [t.backToMainMenu, t.options.support]);
+    } else if (value === t.options.faq) {
+      session.step = 'FAQ';
+      addResponse(t.faqHeader, [...t.faqTopics, t.backToMainMenu]);
+    } else if (value === t.options.call) {
+      const phone = process.env.CAREMOL_PHONE || '919000000000';
+      session.step = 'MAIN_MENU';
+      addResponse(t.callCaremolMessage.replace(/\{phone\}/g, phone), [t.backToMainMenu]);
+    } else if (value === t.options.support) {
+      session.step = 'MAIN_MENU';
+      addResponse(t.supportResponse, [t.backToMainMenu]);
     } else {
       session.step = 'MAIN_MENU';
       session.isOnlyChecking = false;
@@ -118,7 +130,7 @@ export async function handleWhatsAppMessage(from: string, incomingBody: string):
     session.step = 'LANGUAGE_SELECTION';
     session.language = null;
     session.bookingData = { status: 'Created' };
-    addResponse("👋 Welcome back! Select your language / നിങ്ങളുടെ ഭാഷ തിരഞ്ഞെടുക്കുക:", ['English', 'മലയാളം']);
+    addResponse(t.languageSelectPrompt, ['English', 'മലയാളം']);
     await sessionRef.set(session);
     return responses;
   }
@@ -146,9 +158,9 @@ export async function handleWhatsAppMessage(from: string, incomingBody: string):
         session.language = lang;
         session.step = 'MAIN_MENU';
         const langT = TRANSLATIONS[lang];
-        addResponse(`👋 ${langT.welcome}\n${langT.menuHeader}`, (Object.values(langT.options) as string[]).concat([langT.endSession]));
+        addResponse(`👋 ${langT.welcome}\n${langT.menuHeader}`, (Object.values(langT.options) as string[]).concat([langT.changeLanguage, langT.endSession]));
       } else {
-        addResponse("Please select your language / നിങ്ങളുടെ ഭാഷ തിരഞ്ഞെടുക്കുക:", ['English', 'മലയാളം']);
+        addResponse(t.languageSelectPrompt, ['English', 'മലയാളം']);
       }
       break;
 
@@ -169,12 +181,17 @@ export async function handleWhatsAppMessage(from: string, incomingBody: string):
       } else if (value === t.options.packages) {
         session.step = 'PACKAGE_VIEW';
         addResponse(t.selectPackageToView, [...t.packagesList, t.backToMainMenu]);
-      } else if (value === t.options.availability) {
-        session.isOnlyChecking = true;
-        session.step = 'AVAILABILITY_CHECK';
-        addResponse(t.askLocation, [t.backToMainMenu]);
+      } else if (value === t.options.medicine) {
+        session.step = 'MEDICINE_DELIVERY';
+        addResponse(t.medicineComingSoon, [t.backToMainMenu, t.options.support]);
+      } else if (value === t.options.faq) {
+        session.step = 'FAQ';
+        addResponse(t.faqHeader, [...t.faqTopics, t.backToMainMenu]);
+      } else if (value === t.options.call) {
+        const phone = process.env.CAREMOL_PHONE || '919000000000';
+        addResponse(t.callCaremolMessage.replace(/\{phone\}/g, phone), [t.backToMainMenu]);
       } else if (value === t.options.support) {
-        addResponse("Opening support channel... One of our agents will contact you shortly.", [t.backToMainMenu]);
+        addResponse(t.supportResponse, [t.backToMainMenu]);
       } else if (value === t.changeLanguage) {
         session.step = 'LANGUAGE_SELECTION';
         addResponse(t.selectLabel, ['English', 'മലയാളം']);
@@ -410,34 +427,35 @@ export async function handleWhatsAppMessage(from: string, incomingBody: string):
       if (t.slots.includes(value)) {
         session.bookingData.timeSlot = value;
         session.step = 'FASTING_CHECK';
-        addResponse(t.fastingCheck, ['Yes / അതെ', 'No / ഇല്ല']);
+        addResponse(t.fastingCheck, [t.yesFasting, t.noFasting]);
       } else {
         addResponse(t.timeSlot, [...t.slots, t.cancelBooking]);
       }
       break;
 
     case 'FASTING_CHECK':
-      session.bookingData.isFastingConfirmed = value.includes('Yes');
+      session.bookingData.isFastingConfirmed = value === t.yesFasting;
       session.step = 'NOTES';
       addResponse(t.askNotes, [t.none, t.backToMainMenu]);
       break;
 
     case 'NOTES':
-      const notesText = (value === t.none || value.toLowerCase() === 'none' || value === 'ഇല്ല') ? '' : value;
+      const notesText = (value === t.none || value.toLowerCase() === 'none') ? '' : value;
       session.bookingData.notes = notesText;
       session.step = 'CONFIRMATION';
       const fPrice = (session.bookingData.testNames || []).reduce((sum, test) => sum + (TEST_PRICES[test] || 0), 0);
-      const summary = `*${t.confirmHeader}*\n\nTests: ${(session.bookingData.testNames || []).join(', ')}\nPrice: ₹${fPrice}\nPatient: ${session.bookingData.patientName} (${session.bookingData.patientAge})\nAddress: ${session.bookingData.patientAddress}\nNotes: ${notesText || 'None'}`;
-      addResponse(summary, [session.language === 'en' ? 'Confirm' : 'സ്ഥിരീകരിക്കുക', 'Edit / തിരുത്തുക']);
+      const sl = t.summaryLabels;
+      const summary = `*${t.confirmHeader}*\n\n${sl.tests}: ${(session.bookingData.testNames || []).join(', ')}\n${sl.price}: ₹${fPrice}\n${sl.patient}: ${session.bookingData.patientName} (${session.bookingData.patientAge})\n${sl.address}: ${session.bookingData.patientAddress}\n${sl.notes}: ${notesText || t.summaryNoneNotes}`;
+      addResponse(summary, [t.confirmButton, t.editButton]);
       break;
 
     case 'CONFIRMATION':
-      if (value === 'Confirm' || value === 'സ്ഥിരീകരിക്കുക') {
+      if (value === t.confirmButton) {
         session.step = 'PAYMENT';
         addResponse(t.paymentHeader, t.paymentOptions);
       } else {
         session.step = 'MAIN_MENU';
-        addResponse(t.menuHeader, Object.values(t.options));
+        addResponse(t.menuHeader, (Object.values(t.options) as string[]).concat([t.changeLanguage, t.endSession]));
       }
       break;
 
@@ -449,7 +467,7 @@ export async function handleWhatsAppMessage(from: string, incomingBody: string):
       // Reject the booking attempt rather than silently writing an orphan.
       if (!session.bookingData.patientId) {
         console.error('[Bot] PAYMENT step reached without patientId in session', from);
-        addResponse("❌ Patient details are missing. Please start the booking again.", [t.mainMenu]);
+        addResponse(t.bookingDetailsMissing, [t.mainMenu]);
         session.step = 'MAIN_MENU';
         break;
       }
@@ -492,13 +510,39 @@ export async function handleWhatsAppMessage(from: string, incomingBody: string):
         addResponse(receipt, [t.mainMenu, t.endSession]);
       } catch (err) {
         console.error('Save error:', err);
-        addResponse("❌ Failed to save booking. Please try again later.");
+        addResponse(t.bookingFailed);
       }
       break;
 
     case 'COMPLETED':
       session.step = 'MAIN_MENU';
       addResponse(t.returningHeader, (Object.values(t.options) as string[]).concat([t.changeLanguage, t.endSession]));
+      break;
+
+    case 'MEDICINE_DELIVERY':
+      if (value === t.options.support) {
+        session.step = 'MAIN_MENU';
+        addResponse(t.supportResponse, [t.backToMainMenu]);
+      } else {
+        // Anything else (including t.backToMainMenu) returns to main menu
+        session.step = 'MAIN_MENU';
+        addResponse(t.returningHeader, (Object.values(t.options) as string[]).concat([t.changeLanguage, t.endSession]));
+      }
+      break;
+
+    case 'FAQ':
+      if (t.faqTopics.includes(value)) {
+        const answer = t.faqAnswers[value as keyof typeof t.faqAnswers];
+        addResponse(answer, [t.moreFaqs, t.options.support, t.backToMainMenu]);
+      } else if (value === t.moreFaqs || value === t.options.faq) {
+        addResponse(t.faqHeader, [...t.faqTopics, t.backToMainMenu]);
+      } else if (value === t.options.support) {
+        session.step = 'MAIN_MENU';
+        addResponse(t.supportResponse, [t.backToMainMenu]);
+      } else {
+        session.step = 'MAIN_MENU';
+        addResponse(t.returningHeader, (Object.values(t.options) as string[]).concat([t.changeLanguage, t.endSession]));
+      }
       break;
   }
 

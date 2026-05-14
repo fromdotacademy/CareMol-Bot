@@ -59,7 +59,7 @@ export interface PatientProfile {
   updatedAt?: string;
 }
 
-export type ChatStep = 
+export type ChatStep =
   | 'LANGUAGE_SELECTION'
   | 'MAIN_MENU'
   | 'PACKAGE_VIEW'
@@ -85,4 +85,6 @@ export type ChatStep =
   | 'NOTES'
   | 'CONFIRMATION'
   | 'PAYMENT'
-  | 'COMPLETED';
+  | 'COMPLETED'
+  | 'MEDICINE_DELIVERY'
+  | 'FAQ';

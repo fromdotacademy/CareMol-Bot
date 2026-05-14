@@ -25,6 +25,7 @@ Copy `.env.example` to `.env.local` (or `.env`) and set:
 - `WHATSAPP_TOKEN`, `WHATSAPP_PHONE_ID` — WhatsApp Cloud API (Graph v17.0). When missing, `sendWhatsAppMessage` warns and no-ops, so the webhook is testable without credentials.
 - `VERIFY_TOKEN` — webhook verification challenge (defaults to `caremol_verify_token`).
 - `VITE_GOOGLE_MAPS_API_KEY` — read by `mapsService.ts` (note: it is checked on both `process.env` and `import.meta.env` to work on server and client).
+- `CAREMOL_PHONE` / `VITE_CAREMOL_PHONE` — phone number (international format, no leading `+`, e.g. `919876543210`). Used by the "📞 Call CareMol" and "👨‍⚕️ Talk to Support" main-menu options. The unprefixed copy is read by `botLogic.ts` via `process.env.CAREMOL_PHONE`; the `VITE_`-prefixed copy is read by the in-dashboard simulator via `import.meta.env.VITE_CAREMOL_PHONE`. Both fall back to placeholder `919000000000` if unset.
 - `FIREBASE_SERVICE_ACCOUNT` (optional) — JSON-stringified service account **on a single line**. Multi-line JSON breaks `.env` parsing. If absent, Admin SDK falls back to Application Default Credentials.
 - `FIREBASE_KEY_FILE` or `GOOGLE_APPLICATION_CREDENTIALS` — alternative to `FIREBASE_SERVICE_ACCOUNT`; set to the path of the downloaded service account JSON file. Avoids the single-line JSON requirement.
 

@@ -280,8 +280,22 @@ export async function handleWhatsAppMessage(from: string, incomingBody: string):
             patientPhone: pData.phone,
             patientAddress: pData.address || ''
           };
-          session.step = 'AVAILABILITY_CHECK';
-          addResponse(t.askLocation, [t.backToMainMenu]);
+          // Existing patient — skip location check; address is reconfirmed at the end.
+          if (session.bookingData.testNames && session.bookingData.testNames.length > 0) {
+            if (session.bookingData.patientAddress) {
+              session.step = 'PATIENT_ADDRESS_CONFIRM';
+              addResponse(t.confirmAddressPrompt.replace('{address}', session.bookingData.patientAddress), [t.yesCorrect, t.noChange]);
+            } else if (session.bookingData.patientGender) {
+              session.step = 'PATIENT_ADDRESS';
+              addResponse(t.patientAddress, [t.backToMainMenu]);
+            } else {
+              session.step = 'PATIENT_GENDER';
+              addResponse(t.patientGender, [...t.genderOptions, t.backToMainMenu]);
+            }
+          } else {
+            session.step = 'TEST_SELECTION';
+            addResponse(t.askTest, [...t.packagesList, t.cancelBooking]);
+          }
         } else {
           session.step = 'PATIENT_DETAILS_ENTRY';
           addResponse(t.patientDetailsEntry, [t.backToMainMenu]);
@@ -464,7 +478,18 @@ export async function handleWhatsAppMessage(from: string, incomingBody: string):
         await upsertPatientProfile(from, {}, session.bookingData.patientId);
 
         session.step = 'COMPLETED';
-        addResponse(`${t.success}\n*${t.bookingId}: ${bId}*\n${t.phlebMsg}`, [t.mainMenu, t.endSession]);
+        const receiptPrice = (session.bookingData.testNames || []).reduce((sum, test) => sum + (TEST_PRICES[test] || 0), 0);
+        const receipt =
+          `*🧾 ${t.success}*\n\n` +
+          `*${t.bookingId}:* ${bId}\n` +
+          `*Patient:* ${session.bookingData.patientName} (${session.bookingData.patientAge})\n` +
+          `*Tests:* ${(session.bookingData.testNames || []).join(', ')}\n` +
+          `*Price:* ₹${receiptPrice}\n` +
+          `*Address:* ${session.bookingData.patientAddress || '-'}\n` +
+          `*Slot:* ${session.bookingData.timeSlot || '-'}\n` +
+          `*Payment:* ${method}\n\n` +
+          `${t.phlebMsg}`;
+        addResponse(receipt, [t.mainMenu, t.endSession]);
       } catch (err) {
         console.error('Save error:', err);
         addResponse("❌ Failed to save booking. Please try again later.");

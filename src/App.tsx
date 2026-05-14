@@ -1936,8 +1936,21 @@ function WhatsAppSimulator({ userId }: { userId: string }) {
               patientPhone: selectedPatient.phone,
               patientAddress: selectedPatient.address || ''
             }));
-            setStep('AVAILABILITY_CHECK');
-            addBotMessage(t.askLocation);
+            // Existing patient — skip location check; address is reconfirmed at the end.
+            if (bookingData.testNames && bookingData.testNames.length > 0) {
+              if (selectedPatient.address) {
+                setStep('PATIENT_ADDRESS_CONFIRM');
+                addBotMessage(t.confirmAddressPrompt.replace('{address}', selectedPatient.address), [t.yesCorrect, t.noChange]);
+              } else if (selectedPatient.gender) {
+                setStep('PATIENT_ADDRESS');
+                addBotMessage(t.patientAddress, [t.backToMainMenu], true);
+              } else {
+                setStep('PATIENT_GENDER');
+                addBotMessage(t.patientGender, [...t.genderOptions, t.backToMainMenu]);
+              }
+            } else {
+              promptTestSelection();
+            }
           } else {
             // "Someone else" selected (Reset patient specific fields)
             setBookingData(prev => ({
@@ -2170,9 +2183,19 @@ function WhatsAppSimulator({ userId }: { userId: string }) {
             // Touch patient updatedAt to surface as recently active.
             await upsertPatientWeb(userId, {}, bookingData.patientId);
 
-            const shareOptions = [t.shareToWhatsApp, t.mainMenu, t.endSession];
             setStep('COMPLETED');
-            addBotMessage(`${t.success}\n${t.bookingId}: ${finalId}\n${t.phlebMsg}`, shareOptions);
+            const receiptPrice = (bookingData.testNames || []).reduce((sum, test) => sum + (TEST_PRICES[test] || 0), 0);
+            const receipt =
+              `*🧾 ${t.success}*\n\n` +
+              `*${t.bookingId}:* ${finalId}\n` +
+              `*Patient:* ${bookingData.patientName} (${bookingData.patientAge})\n` +
+              `*Tests:* ${(bookingData.testNames || []).join(', ')}\n` +
+              `*Price:* ₹${receiptPrice}\n` +
+              `*Address:* ${bookingData.patientAddress || '-'}\n` +
+              `*Slot:* ${bookingData.timeSlot || '-'}\n` +
+              `*Payment:* ${currentMethod}\n\n` +
+              `${t.phlebMsg}`;
+            addBotMessage(receipt, [t.mainMenu, t.endSession]);
           } catch (e) {
             console.error('Save error:', e);
             addBotMessage("❌ Failed to save booking. Please check permissions.");
@@ -2183,11 +2206,6 @@ function WhatsAppSimulator({ userId }: { userId: string }) {
           if (value === t.mainMenu) {
             setStep('MAIN_MENU');
             addBotMessage(t.returningHeader, (Object.values(t.options) as string[]).concat([t.changeLanguage, t.endSession]));
-          } else if (value === t.shareToWhatsApp) {
-            // Sharing logic - only share if there's a booking ID
-            const msg = encodeURIComponent(`${t.success}!\n${t.bookingId}: ${bookingData.bookingId || 'CM-NEW'}\nPatient: ${bookingData.patientName}\nTests: ${(bookingData.testNames || []).join(', ')}`);
-            window.open(`https://wa.me/?text=${msg}`, '_blank');
-            addBotMessage(`Ready to share!`, [t.mainMenu, t.endSession, t.shareToWhatsApp]);
           } else if (value === t.endSession) {
             setStep('LANGUAGE_SELECTION');
             setLanguage(null);

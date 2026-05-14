@@ -17,6 +17,9 @@ export interface Booking {
   patientAddress: string;
   testNames: string[];
   timeSlot: string;
+  bookingDate?: string; // "YYYY-MM-DD" in Asia/Kolkata. Optional only for legacy bookings; required for new writes.
+  slotStart?: string;   // "HH:mm" 24h canonical start, e.g. "07:00".
+  slotEnd?: string;     // "HH:mm" 24h canonical end, e.g. "08:00".
   status: BookingStatus;
   price: number;
   paymentMethod: 'UPI' | 'Cash';
@@ -28,6 +31,19 @@ export interface Booking {
   assignedToName?: string;
 }
 
+// Weekly default working slots for a phlebotomist. Each array holds slotStart
+// values (e.g. ["07:00", "08:00"]). Empty array means off that weekday.
+// Per-date overrides live in the phlebAvailability collection.
+export interface WeeklySchedule {
+  sun: string[];
+  mon: string[];
+  tue: string[];
+  wed: string[];
+  thu: string[];
+  fri: string[];
+  sat: string[];
+}
+
 export interface Staff {
   uid: string;
   email: string;
@@ -37,6 +53,34 @@ export interface Staff {
   active: boolean;
   createdAt: string;
   createdBy?: string;
+  defaultSchedule?: WeeklySchedule;
+}
+
+export interface SlotConfig {
+  start: string; // "HH:mm" 24h
+  end: string;   // "HH:mm" 24h
+}
+
+// Singleton at config/booking. Edited by admin via Settings tab; read by both
+// bot implementations (cached client-side).
+export interface BookingConfig {
+  slots: SlotConfig[];
+  maxAdvanceDays: number;
+  timezone: string; // e.g. "Asia/Kolkata"
+  updatedAt?: string;
+  updatedBy?: string;
+}
+
+// Document at phlebAvailability/{YYYY-MM-DD}_{phlebUid}. Sparse — created only
+// when admin deviates from staff.defaultSchedule.
+export interface PhlebAvailability {
+  date: string;              // "YYYY-MM-DD"
+  phlebotomistUid: string;
+  phlebotomistName: string;  // denormalized for grid rendering
+  workingSlots: string[];    // slotStart values for this date
+  unavailable?: boolean;     // true = entire day off (workingSlots ignored)
+  updatedAt?: string;
+  updatedBy?: string;
 }
 
 export interface UserProfile {
@@ -80,6 +124,7 @@ export type ChatStep =
   | 'PATIENT_PHONE_CONFIRM'
   | 'PATIENT_ADDRESS'
   | 'PATIENT_ADDRESS_CONFIRM'
+  | 'DATE_SELECTION'
   | 'TIME_SLOT'
   | 'FASTING_CHECK'
   | 'NOTES'

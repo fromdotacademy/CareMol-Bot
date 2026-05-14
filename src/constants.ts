@@ -41,6 +41,8 @@ export const TRANSLATIONS = {
       price: "Price",
       patient: "Patient",
       address: "Address",
+      date: "Date",
+      slot: "Slot",
       notes: "Notes"
     },
     summaryNoneNotes: "None",
@@ -110,6 +112,13 @@ export const TRANSLATIONS = {
       "Medicine Delivery": "💊 *Medicine Delivery*\n\nMedicine Delivery will be available soon. Stay tuned for updates from CareMol.",
       "Contact Support": "📞 *Contact Support*\n\nUse the “Talk to Support” or “Call CareMol” option from the main menu, and our team will reach out shortly."
     },
+    chooseDate: "Choose a date for the home visit:",
+    today: "Today",
+    tomorrow: "Tomorrow",
+    weekdaysShort: ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"],
+    monthsShort: ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"],
+    advanceLimitError: "Please choose a date within the next {n} days.",
+    legacyTimeSlotMissing: "Time slot not set — please pick from the options.",
     genderMap: {
       "Male": "Male",
       "Female": "Female",
@@ -158,6 +167,8 @@ export const TRANSLATIONS = {
       price: "വില",
       patient: "രോഗി",
       address: "വിലാസം",
+      date: "തീയതി",
+      slot: "സമയം",
       notes: "കുറിപ്പുകൾ"
     },
     summaryNoneNotes: "ഇല്ല",
@@ -227,6 +238,13 @@ export const TRANSLATIONS = {
       "മരുന്ന് ഡെലിവറി": "💊 *മരുന്ന് ഡെലിവറി*\n\nമരുന്ന് ഡെലിവറി ഉടൻ ലഭ്യമാകും. CareMol-ൽ നിന്നുള്ള അപ്ഡേറ്റുകൾക്കായി കാത്തിരിക്കുക.",
       "സപ്പോർട്ട് ബന്ധപ്പെടുക": "📞 *സപ്പോർട്ട് ബന്ധപ്പെടുക*\n\nപ്രധാന മെനുവിൽ നിന്ന് “സപ്പോർട്ടുമായി സംസാരിക്കുക” അല്ലെങ്കിൽ “CareMol-ന് വിളിക്കുക” ഓപ്ഷൻ ഉപയോഗിക്കുക, ഞങ്ങളുടെ ടീം ഉടൻ ബന്ധപ്പെടും."
     },
+    chooseDate: "സന്ദർശനത്തിന് ഒരു തീയതി തിരഞ്ഞെടുക്കുക:",
+    today: "ഇന്ന്",
+    tomorrow: "നാളെ",
+    weekdaysShort: ["ഞായർ", "തിങ്കൾ", "ചൊവ്വ", "ബുധൻ", "വ്യാഴം", "വെള്ളി", "ശനി"],
+    monthsShort: ["ജനു", "ഫെബ്രു", "മാർ", "ഏപ്രി", "മേയ്", "ജൂൺ", "ജൂലൈ", "ഓഗ", "സെപ്റ്റം", "ഒക്ടോ", "നവം", "ഡിസം"],
+    advanceLimitError: "ദയവായി അടുത്ത {n} ദിവസത്തിനുള്ളിലെ തീയതി തിരഞ്ഞെടുക്കുക.",
+    legacyTimeSlotMissing: "സമയം സജ്ജമല്ല — ദയവായി ലിസ്റ്റിൽ നിന്ന് തിരഞ്ഞെടുക്കുക.",
     genderMap: {
       "പുരുഷൻ": "Male",
       "സ്ത്രീ": "Female",

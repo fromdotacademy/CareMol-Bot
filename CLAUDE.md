@@ -115,6 +115,20 @@ Roles live in `staff/{uid}` (top-level collection) with `{ role: 'admin' | 'phle
 
 There is no Firebase-Admin-side user creation in the app. To onboard a phlebotomist or admin: have them sign in to the app once with Google (which creates their Firebase Auth account), grab their UID from the Auth tab in Firebase console, then in the admin dashboard's **Staff** tab paste the UID + email + name + role. The `staff/{uid}` doc gates everything else. Disabling is `active: false` (the rules check both presence and `active`); the user instantly drops to the customer view.
 
+### Booking date & per-phleb scheduling
+
+Bookings carry an explicit date (`bookingDate` as `YYYY-MM-DD` in IST) plus canonical 24h start/end (`slotStart`, `slotEnd`). `timeSlot` is the human display label, derived at write time and preserved on the booking for back-compat. These fields are **optional in `firestore.rules`** because legacy bookings predate the field; new bookings created by either bot implementation always include them.
+
+**Slot template.** A single doc at `config/booking` holds the slot definitions and `maxAdvanceDays` (how far ahead customers may book; default 7). Admin edits via the Settings tab. Both `botLogic.ts` and the `WhatsAppSimulator` read this doc and format slot labels via `src/services/slotService.ts` so the two implementations stay byte-identical. Seed with `npx tsx scripts/seed-booking-config.ts` (idempotent; `--force` overwrites).
+
+**Per-phleb availability.** Each phleb's `staff/{uid}` doc carries `defaultSchedule` — a 7-weekday map of `slotStart` lists. Per-date deviations (sick day, holiday, extra shift) live at `phlebAvailability/{YYYY-MM-DD}_{phlebUid}` and are sparse — only written when admin overrides the default. The Schedule tab in the admin dashboard renders the resolved grid per date with click-to-toggle cells.
+
+**Effective slots** for `(phleb, date)` are computed by `effectiveSlotsFromDocs(staff, override, isoDate)` in `slotService.ts`: override wins if present; else `staff.defaultSchedule[weekday]`; else empty. The Settings/Schedule tabs and the admin assignment dropdown all share this single resolver — change it once.
+
+**Slot occupancy is derived, not materialized.** "Is `(phleb P, date D, slot S)` taken?" is answered by querying `bookings where bookingDate==D and slotStart==S and assignedTo==P and status != 'Completed'`. The Firestore composite index `(bookingDate, slotStart, assignedTo, status)` is declared in `firestore.indexes.json`. Reassigning a booking, rescheduling its date, or cancelling it all "cascade" automatically because the booking row IS the source of truth.
+
+**Customer flow.** The bot inserts a `DATE_SELECTION` step (between `PATIENT_ADDRESS_CONFIRM` and `TIME_SLOT`) that lists today + the next `maxAdvanceDays-1` dates with localized labels (`Today`, `Tomorrow`, `Wed, 14 May`). Customer sees all template slots regardless of phleb availability — admin absorbs any over-allocation manually via the filtered assign dropdown.
+
 ### Phlebotomist queries
 
 Phlebotomists cannot list `bookings` unfiltered — the rules require a filter that all returned docs can satisfy. `PhlebotomistDashboard` runs two scoped subscriptions:
@@ -128,4 +142,6 @@ Phlebotomists cannot list `bookings` unfiltered — the rules require a filter t
 - `sendWhatsAppMessage` (`src/services/whatsappService.ts`) auto-picks the WhatsApp payload shape from `buttons.length`: text-only, 1–3 reply buttons, or list (up to 10). Button titles are truncated to 20 chars, list rows to 24.
 - `App.tsx` is a single ~1300-line file containing the auth wrapper, dashboard, and simulator. Prefer extending it in place; the only extracted component so far is `src/components/Verify.tsx` (a `/api/health` probe widget).
 - `firestore.rules` denies everything by default (`match /{document=**} { allow read, write: if false; }`) and then re-opens specific paths. New collections need explicit allow rules or they will be inaccessible from the web SDK.
+- **Collection-group queries need a wildcard rule.** A path-based rule like `match /users/{u}/patients/{p}` does NOT cover `collectionGroup(db, 'patients')` — you also need `match /{path=**}/patients/{patientId}` at the top level. Both rules coexist: the path rule governs direct doc reads/writes; the wildcard rule enables group queries. Missing the wildcard produces a "Database Error: list on patients" runtime error.
 - The dev server intentionally disables file-watching when `DISABLE_HMR=true` (set by AI Studio) to prevent flicker during agent edits — leave the guard in `vite.config.ts` alone.
+- `scripts/smoke-test-date-flow.ts` is a one-shot Admin SDK E2E test for the bot's date+slot flow. Pre-load env vars (see patient invariant section above for the PowerShell one-liner), then run `npx tsx scripts/smoke-test-date-flow.ts`. It seeds a session, drives DATE_SELECTION → TIME_SLOT → FASTING_CHECK, asserts all new booking fields, and self-cleans.

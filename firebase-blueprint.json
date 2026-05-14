@@ -15,10 +15,11 @@
     },
     "Booking": {
       "title": "Booking",
-      "description": "Lab test booking details",
+      "description": "Lab test booking details. bookingDate/slotStart/slotEnd were added in 2026-05; older bookings may not have them (legacy).",
       "type": "object",
       "properties": {
         "bookingId": { "type": "string" },
+        "patientId": { "type": "string", "description": "Required for new bookings — links to /users/{userId}/patients/{patientId}." },
         "userId": { "type": "string" },
         "patientName": { "type": "string" },
         "patientAge": { "type": "number" },
@@ -26,13 +27,19 @@
         "patientPhone": { "type": "string" },
         "patientAddress": { "type": "string" },
         "testNames": { "type": "array", "items": { "type": "string" } },
-        "timeSlot": { "type": "string" },
+        "timeSlot": { "type": "string", "description": "Human-readable label like '7:00 AM – 8:00 AM'. Derived from slotStart/slotEnd at write time for new bookings; preserved as-is on legacy bookings." },
+        "bookingDate": { "type": "string", "description": "YYYY-MM-DD in Asia/Kolkata. Optional for legacy bookings only." },
+        "slotStart": { "type": "string", "description": "HH:mm 24h, e.g. '07:00'. Canonical occupancy key paired with bookingDate." },
+        "slotEnd": { "type": "string", "description": "HH:mm 24h, e.g. '08:00'." },
         "status": { "type": "string", "enum": ["Created", "Assigned", "Collected", "Processing", "Completed"] },
         "price": { "type": "number" },
         "paymentMethod": { "type": "string", "enum": ["UPI", "Cash"] },
         "isFastingConfirmed": { "type": "boolean" },
         "notes": { "type": "string" },
-        "createdAt": { "type": "string", "format": "date-time" }
+        "createdAt": { "type": "string", "format": "date-time" },
+        "priority": { "type": "string", "enum": ["high", "medium", "low"] },
+        "assignedTo": { "type": "string", "description": "Phlebotomist Firebase Auth uid." },
+        "assignedToName": { "type": "string" }
       },
       "required": ["bookingId", "userId", "patientName", "status", "createdAt"]
     },
@@ -55,7 +62,7 @@
     },
     "Staff": {
       "title": "Staff",
-      "description": "Admin or phlebotomist staff member",
+      "description": "Admin or phlebotomist staff member. defaultSchedule is consulted when no per-date override exists in phlebAvailability.",
       "type": "object",
       "properties": {
         "uid": { "type": "string" },
@@ -65,9 +72,60 @@
         "role": { "type": "string", "enum": ["admin", "phlebotomist"] },
         "active": { "type": "boolean" },
         "createdAt": { "type": "string", "format": "date-time" },
-        "createdBy": { "type": "string" }
+        "createdBy": { "type": "string" },
+        "defaultSchedule": {
+          "type": "object",
+          "description": "Per-weekday list of slotStart values this phleb works by default. Empty array = off that weekday.",
+          "properties": {
+            "sun": { "type": "array", "items": { "type": "string" } },
+            "mon": { "type": "array", "items": { "type": "string" } },
+            "tue": { "type": "array", "items": { "type": "string" } },
+            "wed": { "type": "array", "items": { "type": "string" } },
+            "thu": { "type": "array", "items": { "type": "string" } },
+            "fri": { "type": "array", "items": { "type": "string" } },
+            "sat": { "type": "array", "items": { "type": "string" } }
+          }
+        }
       },
       "required": ["uid", "email", "role", "active"]
+    },
+    "BookingConfig": {
+      "title": "BookingConfig",
+      "description": "Singleton at config/booking. Admin-edited slot template and booking window. Both bot implementations (server + simulator) read this on entry to the date/slot picker.",
+      "type": "object",
+      "properties": {
+        "slots": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "start": { "type": "string", "description": "HH:mm 24h" },
+              "end": { "type": "string", "description": "HH:mm 24h" }
+            },
+            "required": ["start", "end"]
+          }
+        },
+        "maxAdvanceDays": { "type": "number", "description": "How many days ahead customers may book (1–30)." },
+        "timezone": { "type": "string", "description": "Display tz, e.g. 'Asia/Kolkata'. All date arithmetic is single-tz." },
+        "updatedAt": { "type": "string", "format": "date-time" },
+        "updatedBy": { "type": "string" }
+      },
+      "required": ["slots", "maxAdvanceDays"]
+    },
+    "PhlebAvailability": {
+      "title": "PhlebAvailability",
+      "description": "Per-date override of a phleb's working slots. Sparse: a document is created only when admin deviates from the staff defaultSchedule. Resolution order at query time: override doc (if exists) > staff.defaultSchedule[weekday] > empty.",
+      "type": "object",
+      "properties": {
+        "date": { "type": "string", "description": "YYYY-MM-DD" },
+        "phlebotomistUid": { "type": "string" },
+        "phlebotomistName": { "type": "string", "description": "Denormalized for grid rendering." },
+        "workingSlots": { "type": "array", "items": { "type": "string" }, "description": "slotStart values worked on this date." },
+        "unavailable": { "type": "boolean", "description": "True = full day off (workingSlots ignored)." },
+        "updatedAt": { "type": "string", "format": "date-time" },
+        "updatedBy": { "type": "string" }
+      },
+      "required": ["date", "phlebotomistUid", "workingSlots"]
     }
   },
   "firestore": {
@@ -81,11 +139,19 @@
     },
     "/bookings/{bookingId}": {
       "schema": "Booking",
-      "description": "Test booking records"
+      "description": "Test booking records. Slot occupancy for (phleb, date, slot) is derived by querying this collection — there is no separate inventory."
     },
     "/staff/{uid}": {
       "schema": "Staff",
       "description": "Internal staff (admins & phlebotomists). uid is the Firebase Auth uid."
+    },
+    "/config/booking": {
+      "schema": "BookingConfig",
+      "description": "Singleton booking configuration document. Seed via scripts/seed-booking-config.ts; edit via the admin Settings tab."
+    },
+    "/phlebAvailability/{date_phlebUid}": {
+      "schema": "PhlebAvailability",
+      "description": "Composite-id document overriding a phleb's effective slots for a specific date. Sparse — most (phleb, date) pairs have no doc and fall back to staff.defaultSchedule."
     }
   }
 }

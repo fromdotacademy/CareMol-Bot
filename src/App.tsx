@@ -2480,21 +2480,48 @@ function WhatsAppSimulator({ userId }: { userId: string }) {
 
   useEffect(() => {
     const initSimulator = async () => {
+      let detectedLang: Language | null = null;
+      let detectedName = '';
+
       try {
         // Fetch base user profile (language pref)
         const userRef = doc(db, 'users', userId);
         const userSnap = await getDoc(userRef);
-        
+
         if (userSnap.exists()) {
           const profile = userSnap.data();
           if (profile.language) {
             setLanguage(profile.language);
             setUserName(profile.name || 'User');
+            detectedLang = profile.language as Language;
+            detectedName = profile.name || 'User';
           }
         }
       } catch (e) {
         console.error("Error initializing simulator:", e);
       } finally {
+        // Auto-start chat on mount so the simulator is never blank,
+        // even if the profile fetch failed.
+        if (detectedLang) {
+          const langT = TRANSLATIONS[detectedLang];
+          setStep('MAIN_MENU');
+          setMessages([{
+            id: 'init',
+            text: langT.greetName.replace('{name}', detectedName || 'User') + '\n\n' + langT.returningHeader,
+            sender: 'bot',
+            timestamp: new Date(),
+            buttons: (Object.values(langT.options) as string[]).concat([langT.changeLanguage, langT.endSession]),
+          }]);
+        } else {
+          setMessages([{
+            id: 'init',
+            text: TRANSLATIONS.en.languageSelectPrompt,
+            sender: 'bot',
+            timestamp: new Date(),
+            buttons: ['English', 'മലയാളം'],
+          }]);
+        }
+        setInputVisible(false);
         setIsInitializing(false);
       }
     };

@@ -6,3 +6,10 @@ coverage/
 *.log
 .env*
 !.env.example
+
+# Playwright artifacts (auth tokens, traces, screenshots)
+test-results/
+playwright-report/
+.playwright-mcp/
+tests/auth/*.json
+dashboard-full.png

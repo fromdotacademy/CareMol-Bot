@@ -186,6 +186,23 @@ export function computeBookingPrice(testNames: string[], ecgAddon: boolean): num
   return base + (ecgAddon ? ECG_ADDON_PRICE : 0);
 }
 
+// Sum of admin-added custom line items. Safe on undefined/null.
+export function computeCustomTestsTotal(customTests: { name: string; price: number }[] | undefined | null): number {
+  if (!customTests || customTests.length === 0) return 0;
+  return customTests.reduce((sum, t) => sum + (Number(t.price) || 0), 0);
+}
+
+// Grand total for a booking: package prices + custom items + optional ECG add-on.
+// Used by the New Booking modal and the phleb/admin dashboards so package, custom,
+// and add-on contributions stay consistent across read sites.
+export function computeBookingTotal(
+  testNames: string[],
+  customTests: { name: string; price: number }[] | undefined | null,
+  ecgAddon: boolean
+): number {
+  return computeBookingPrice(testNames, ecgAddon) + computeCustomTestsTotal(customTests);
+}
+
 export function browserPackagesList(lang: SupportedLanguage): string[] {
   return PACKAGES.map(p => (lang === 'ml' ? p.name_ml : p.name_en));
 }
@@ -287,20 +304,25 @@ export const TRANSLATIONS = {
     editButton: "Edit Details",
     summaryLabels: {
       tests: "Tests",
+      additionalItems: "Additional",
       price: "Price",
       patient: "Patient",
+      gender: "Gender",
       address: "Address",
       date: "Date",
       slot: "Slot",
-      notes: "Notes"
+      fasting: "Fasting",
+      notes: "Notes",
+      payment: "Payment"
     },
     summaryNoneNotes: "None",
+    fastingYesLabel: "Yes",
+    fastingNoLabel: "No",
     paymentHeader: "Select payment method:",
     paymentOptions: ["UPI", "Cash on Collection"],
     success: "Booking Confirmed ✅",
     bookingId: "Booking ID",
     phlebMsg: "Phlebotomist will arrive at selected time",
-    reportReady: "Your report is ready\nDownload: caremol.in/report/CM123",
     shareToWhatsApp: "Share to WhatsApp",
     endSession: "🚪 End Chat",
     sessionEnded: "Chat session ended. Type anything to start again.",
@@ -329,6 +351,9 @@ export const TRANSLATIONS = {
     patientBasicDetailsPrompt: "Please enter patient details:\n\nName:\nAge:\nPhone Number:",
     changeLocation: "📍 Change Location",
     enterAnotherPin: "🔢 Enter Another PIN Code",
+    shareLocation: "📍 Share Location",
+    gpsOutsideArea: "📍 We couldn't confirm your area from the location you shared. Please type your 6-digit PIN code instead.",
+    locationUnavailableBrowser: "📍 Couldn't get your location. Please type your PIN code instead.",
     serviceUnavailable: "Currently service is not available in this area.",
     askNotes: "Any specific instructions or notes for the phlebotomist? (Optional - type 'None' or skip)",
     none: "None",
@@ -339,25 +364,23 @@ export const TRANSLATIONS = {
     callCaremolMessage: "📞 Tap the number below to call CareMol:\n\n+{phone}\n\nOr message us on WhatsApp: https://wa.me/{phone}",
     faqHeader: "❓ Frequently Asked Questions\n\nPick a topic:",
     moreFaqs: "❓ More FAQs",
+    // NOTE: "Available Locations" answer below hardcodes "PIN 679326 / 5 km of Melattur".
+    // Keep in sync with config/booking.servicePins + serviceRadiusKm if coverage expands.
     faqTopics: [
       "Available Locations",
       "Working Hours",
       "Sample Collection Timing",
-      "Report Delivery Time",
       "Payment Methods",
-      "Refund / Cancellation",
       "Doctor Consultation",
       "Medicine Delivery",
       "Contact Support"
     ],
     faqAnswers: {
       "Available Locations": "📍 *Available Locations*\n\nWe currently serve homes within 5 km of Melattur (PIN 679326). More locations coming soon!",
-      "Working Hours": "🕐 *Working Hours*\n\n[TODO: fill in working hours, e.g., Mon–Sat 7:00 AM – 8:00 PM, Sun 8:00 AM – 1:00 PM]",
+      "Working Hours": "🕐 *Working Hours*\n\n• Mon–Sat: 6:00 AM – 8:00 PM\n• Sun: 8:00 AM – 1:00 PM",
       "Sample Collection Timing": "🧪 *Sample Collection Timing*\n\nMorning slots are recommended for fasting tests. Available time slots:\n• 08:00 AM – 10:00 AM\n• 10:00 AM – 12:00 PM\n• 02:00 PM – 04:00 PM\n• 04:00 PM – 06:00 PM",
-      "Report Delivery Time": "📄 *Report Delivery Time*\n\n[TODO: fill in turn-around time per package, e.g., Basic Health: same day; Elite Care: 24–48 hrs]",
       "Payment Methods": "💳 *Payment Methods*\n\nWe accept:\n• UPI (at booking)\n• Cash on Collection",
-      "Refund / Cancellation": "↩️ *Refund / Cancellation*\n\n[TODO: fill in cancellation window and refund policy]",
-      "Doctor Consultation": "👨‍⚕️ *Doctor Consultation*\n\n[TODO: fill in whether doctor consultation is available, and how to request it]",
+      "Doctor Consultation": "👨‍⚕️ *Doctor Consultation*\n\nDoctor Consultation will be available soon. Stay tuned for updates from CareMol.",
       "Medicine Delivery": "💊 *Medicine Delivery*\n\nMedicine Delivery will be available soon. Stay tuned for updates from CareMol.",
       "Contact Support": "📞 *Contact Support*\n\nUse the “Talk to Support” or “Call CareMol” option from the main menu, and our team will reach out shortly."
     },
@@ -423,20 +446,25 @@ export const TRANSLATIONS = {
     editButton: "തിരുത്തുക",
     summaryLabels: {
       tests: "ടെസ്റ്റുകൾ",
+      additionalItems: "അധിക ഇനങ്ങൾ",
       price: "വില",
       patient: "രോഗി",
+      gender: "ലിംഗം",
       address: "വിലാസം",
       date: "തീയതി",
       slot: "സമയം",
-      notes: "കുറിപ്പുകൾ"
+      fasting: "ഉപവാസം",
+      notes: "കുറിപ്പുകൾ",
+      payment: "പേയ്‌മെന്റ്"
     },
     summaryNoneNotes: "ഇല്ല",
+    fastingYesLabel: "അതെ",
+    fastingNoLabel: "ഇല്ല",
     paymentHeader: "പേയ്‌മെന്റ് രീതി തിരഞ്ഞെടുക്കുക:",
     paymentOptions: ["UPI", "Cash on Collection"],
     success: "ബുക്കിംഗ് സ്ഥിരീകരിച്ചു ✅",
     bookingId: "ബുക്കിംഗ് ഐഡി",
     phlebMsg: "നിശ്ചിത സമയത്ത് സ്റ്റാഫ് എത്തും",
-    reportReady: "നിങ്ങളുടെ റിപ്പോർട്ട് തയ്യാറായി\nഡൗൺലോഡ് ചെയ്യുക: caremol.in/report/CM123",
     shareToWhatsApp: "വാട്സാപ്പിൽ അയക്കുക",
     endSession: "🚪 ചാറ്റ് അവസാനിപ്പിക്കുക",
     sessionEnded: "ചാറ്റ് അവസാനിച്ചു. വീണ്ടും തുടങ്ങാൻ സന്ദേശം അയക്കുക.",
@@ -465,6 +493,9 @@ export const TRANSLATIONS = {
     patientBasicDetailsPrompt: "രോഗിയുടെ വിവരങ്ങൾ താഴെ പറയുന്ന രീതിയിൽ നൽകുക:\n\nപേര്:\nപ്രായം:\nഫോൺ നമ്പർ:",
     changeLocation: "📍 ലൊക്കേഷൻ മാറ്റുക",
     enterAnotherPin: "🔢 മറ്റൊരു പിൻകോഡ് നൽകുക",
+    shareLocation: "📍 ലൊക്കേഷൻ പങ്കിടുക",
+    gpsOutsideArea: "📍 പങ്കിട്ട ലൊക്കേഷനിൽ നിന്ന് നിങ്ങളുടെ പ്രദേശം സ്ഥിരീകരിക്കാൻ കഴിഞ്ഞില്ല. ദയവായി 6 അക്ക പിൻകോഡ് ടൈപ്പ് ചെയ്യുക.",
+    locationUnavailableBrowser: "📍 നിങ്ങളുടെ ലൊക്കേഷൻ ലഭിക്കാൻ കഴിഞ്ഞില്ല. ദയവായി പിൻകോഡ് ടൈപ്പ് ചെയ്യുക.",
     serviceUnavailable: "നിലവിൽ ഈ പ്രദേശത്ത് സേവനം ലഭ്യമല്ല.",
     askNotes: "സ്റ്റാഫിന് പ്രത്യേക നിർദ്ദേശങ്ങൾ വല്ലതും ഉണ്ടോ? (നിർബന്ധമില്ല - 'ഇല്ല' എന്ന് ടൈപ്പ് ചെയ്യുകയോ ഒഴിവാക്കുകയോ ചെയ്യാം)",
     none: "ഇല്ല",
@@ -479,21 +510,17 @@ export const TRANSLATIONS = {
       "സർവീസ് ലഭ്യമായ സ്ഥലങ്ങൾ",
       "പ്രവൃത്തി സമയം",
       "സാമ്പിൾ കളക്ഷൻ സമയം",
-      "റിപ്പോർട്ട് ലഭ്യമാകുന്ന സമയം",
       "പേയ്‌മെന്റ് രീതികൾ",
-      "റീഫണ്ട് / റദ്ദാക്കൽ",
       "ഡോക്ടർ കൺസൾട്ടേഷൻ",
       "മരുന്ന് ഡെലിവറി",
       "സപ്പോർട്ട് ബന്ധപ്പെടുക"
     ],
     faqAnswers: {
       "സർവീസ് ലഭ്യമായ സ്ഥലങ്ങൾ": "📍 *സർവീസ് ലഭ്യമായ സ്ഥലങ്ങൾ*\n\nനിലവിൽ Melattur ചുറ്റും 5 km പരിധിയിൽ (PIN 679326) സേവനം ലഭ്യമാണ്. കൂടുതൽ സ്ഥലങ്ങൾ ഉടൻ ചേർക്കും!",
-      "പ്രവൃത്തി സമയം": "🕐 *പ്രവൃത്തി സമയം*\n\n[TODO: പ്രവൃത്തി സമയം ചേർക്കുക, ഉദാ: തിങ്കൾ–ശനി 7:00 AM – 8:00 PM, ഞായർ 8:00 AM – 1:00 PM]",
+      "പ്രവൃത്തി സമയം": "🕐 *പ്രവൃത്തി സമയം*\n\n• തിങ്കൾ–ശനി: 6:00 AM – 8:00 PM\n• ഞായർ: 8:00 AM – 1:00 PM",
       "സാമ്പിൾ കളക്ഷൻ സമയം": "🧪 *സാമ്പിൾ കളക്ഷൻ സമയം*\n\nഫാസ്റ്റിംഗ് ടെസ്റ്റുകൾക്ക് രാവിലത്തെ സ്ലോട്ടുകൾ ശുപാർശ ചെയ്യുന്നു. ലഭ്യമായ സമയങ്ങൾ:\n• 08:00 AM – 10:00 AM\n• 10:00 AM – 12:00 PM\n• 02:00 PM – 04:00 PM\n• 04:00 PM – 06:00 PM",
-      "റിപ്പോർട്ട് ലഭ്യമാകുന്ന സമയം": "📄 *റിപ്പോർട്ട് ലഭ്യമാകുന്ന സമയം*\n\n[TODO: ഓരോ പാക്കേജിന്റെയും റിപ്പോർട്ട് സമയം ചേർക്കുക, ഉദാ: ബേസിക് ഹെൽത്ത്: അതേ ദിവസം; എലൈറ്റ് കെയർ: 24–48 മണിക്കൂർ]",
       "പേയ്‌മെന്റ് രീതികൾ": "💳 *പേയ്‌മെന്റ് രീതികൾ*\n\nഞങ്ങൾ സ്വീകരിക്കുന്നത്:\n• UPI (ബുക്കിംഗിൽ)\n• കളക്ഷനിൽ പണം",
-      "റീഫണ്ട് / റദ്ദാക്കൽ": "↩️ *റീഫണ്ട് / റദ്ദാക്കൽ*\n\n[TODO: റദ്ദാക്കൽ സമയവും റീഫണ്ട് നയവും ചേർക്കുക]",
-      "ഡോക്ടർ കൺസൾട്ടേഷൻ": "👨‍⚕️ *ഡോക്ടർ കൺസൾട്ടേഷൻ*\n\n[TODO: ഡോക്ടർ കൺസൾട്ടേഷൻ ലഭ്യമാണോ എന്നും, എങ്ങനെ അഭ്യർത്ഥിക്കാം എന്നും ചേർക്കുക]",
+      "ഡോക്ടർ കൺസൾട്ടേഷൻ": "👨‍⚕️ *ഡോക്ടർ കൺസൾട്ടേഷൻ*\n\nഡോക്ടർ കൺസൾട്ടേഷൻ ഉടൻ ലഭ്യമാകും. CareMol-ൽ നിന്നുള്ള അപ്ഡേറ്റുകൾക്കായി കാത്തിരിക്കുക.",
       "മരുന്ന് ഡെലിവറി": "💊 *മരുന്ന് ഡെലിവറി*\n\nമരുന്ന് ഡെലിവറി ഉടൻ ലഭ്യമാകും. CareMol-ൽ നിന്നുള്ള അപ്ഡേറ്റുകൾക്കായി കാത്തിരിക്കുക.",
       "സപ്പോർട്ട് ബന്ധപ്പെടുക": "📞 *സപ്പോർട്ട് ബന്ധപ്പെടുക*\n\nപ്രധാന മെനുവിൽ നിന്ന് “സപ്പോർട്ടുമായി സംസാരിക്കുക” അല്ലെങ്കിൽ “CareMol-ന് വിളിക്കുക” ഓപ്ഷൻ ഉപയോഗിക്കുക, ഞങ്ങളുടെ ടീം ഉടൻ ബന്ധപ്പെടും."
     },

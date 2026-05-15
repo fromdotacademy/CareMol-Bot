@@ -22,6 +22,9 @@ const DEFAULT_CONFIG: BookingConfig = {
   ],
   maxAdvanceDays: 7,
   timezone: "Asia/Kolkata",
+  servicePins: ["679326"],
+  serviceCenter: { lat: 11.0664, lng: 76.2687 },
+  serviceRadiusKm: 5,
 };
 
 async function run() {

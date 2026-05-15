@@ -49,4 +49,7 @@ if (!admin.apps.length) {
 }
 
 export const adminDb = getFirestore(app, firebaseConfig.firestoreDatabaseId || '(default)');
+// Strip undefined values from writes instead of throwing. Matches the web SDK
+// configuration in src/lib/firebase.ts so both code paths behave identically.
+adminDb.settings({ ignoreUndefinedProperties: true });
 export { admin };

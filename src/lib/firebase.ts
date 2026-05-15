@@ -6,11 +6,18 @@ import {
   browserPopupRedirectResolver,
   signInWithCustomToken,
 } from 'firebase/auth';
-import { getFirestore } from 'firebase/firestore';
+import { initializeFirestore } from 'firebase/firestore';
 import firebaseConfig from '../../firebase-applet-config.json';
 
 const app = initializeApp(firebaseConfig);
-export const db = getFirestore(app, firebaseConfig.firestoreDatabaseId);
+// ignoreUndefinedProperties strips undefined values from writes instead of
+// throwing — keeps the manual-booking modal and any future Partial<...> writes
+// safe without per-call sanitization.
+export const db = initializeFirestore(
+  app,
+  { ignoreUndefinedProperties: true },
+  firebaseConfig.firestoreDatabaseId
+);
 
 // In dev/test use localStorage persistence so Playwright storageState captures
 // the auth session. In production keep IndexedDB (service-worker compatible).

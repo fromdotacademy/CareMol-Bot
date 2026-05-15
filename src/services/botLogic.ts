@@ -9,7 +9,8 @@ import {
   cartPackagesList,
   formatPackageDetail,
 } from '../constants';
-import { geocodeLocation, isWithinRange } from './mapsService';
+import { buildBookingConfirmation } from './confirmationMessage';
+import { isCoordInServiceArea, isPinInServiceArea, toServiceAreaConfig } from './serviceAreaService';
 import { generateId } from '../lib/utils';
 import { ChatStep, Language, Booking, BookingConfig, PatientProfile } from '../types';
 import { parsePatientDetails } from './geminiService';
@@ -81,6 +82,34 @@ async function upsertPatientProfile(
   return patientId;
 }
 
+// Conservative name normalization for dedup matching. Must match the web SDK
+// twin in src/services/patientService.ts so both layers identify duplicates
+// identically.
+function normalizePatientName(name: string): string {
+  return (name || '').trim().toLowerCase().replace(/\s+/g, ' ');
+}
+
+// Dedup-aware patient upsert for the bot's lead-capture path. If a profile with
+// the same normalized name already exists under this phone, merge fields into
+// it instead of creating a duplicate. Callers that already have a patientId
+// should use upsertPatientProfile(phone, fields, existingId) directly.
+async function findOrCreatePatientProfile(
+  phone: string,
+  fields: Partial<PatientProfile> & { name: string }
+): Promise<string> {
+  const target = normalizePatientName(fields.name);
+  const snap = await adminDb.collection('users').doc(phone).collection('patients').get();
+  let matchId: string | undefined;
+  snap.forEach(doc => {
+    if (matchId) return;
+    const data = doc.data() as PatientProfile;
+    if (normalizePatientName(data.name || '') === target) {
+      matchId = data.id || doc.id;
+    }
+  });
+  return upsertPatientProfile(phone, fields, matchId);
+}
+
 // Shared post-tests router. Called after the user has picked one or more
 // packages — decides whether to ask the ECG add-on question or proceed to the
 // next missing patient field. Keeps the ECG step from being bypassed when a
@@ -118,7 +147,16 @@ function routeAfterTestsKnown(
   }
 }
 
-export async function handleWhatsAppMessage(from: string, incomingBody: string): Promise<BotResponse[]> {
+export interface IncomingLocation {
+  latitude: number;
+  longitude: number;
+}
+
+export async function handleWhatsAppMessage(
+  from: string,
+  incomingBody: string,
+  location?: IncomingLocation | null,
+): Promise<BotResponse[]> {
   const sessionRef = adminDb.collection('whatsapp_sessions').doc(from);
   const sessionDoc = await sessionRef.get();
   
@@ -286,17 +324,18 @@ export async function handleWhatsAppMessage(from: string, incomingBody: string):
         else if (parsed.isFemale) patientGender = 'Female';
 
         // Create patient profile immediately (lead capture).
-        // If we already have a patientId on this session (rare retry case), update it instead.
-        const patientId = await upsertPatientProfile(
-          from,
-          {
-            name: patientName,
-            age: patientAge,
-            phone: patientPhone,
-            ...(patientGender ? { gender: patientGender } : {}),
-          },
-          session.bookingData.patientId
-        );
+        // If we already have a patientId on this session (rare retry case),
+        // update that record. Otherwise dedup by normalized name so repeated
+        // entries of the same patient on the same phone don't fork profiles.
+        const patientFields = {
+          name: patientName,
+          age: patientAge,
+          phone: patientPhone,
+          ...(patientGender ? { gender: patientGender } : {}),
+        };
+        const patientId = session.bookingData.patientId
+          ? await upsertPatientProfile(from, patientFields, session.bookingData.patientId)
+          : await findOrCreatePatientProfile(from, patientFields);
 
         session.bookingData = {
           ...session.bookingData,
@@ -409,32 +448,49 @@ export async function handleWhatsAppMessage(from: string, incomingBody: string):
       }
       break;
 
-    case 'AVAILABILITY_CHECK':
-      if (value === t.changeLocation || value === t.enterAnotherPin) {
-        addResponse(t.askLocation, [t.backToMainMenu]);
-        break;
-      }
-      const melatturPin = '679326';
-      const isAvailable = value.includes(melatturPin);
+    case 'AVAILABILITY_CHECK': {
+      const cfg = toServiceAreaConfig(await loadBookingConfig());
 
-      if (isAvailable) {
-        addResponse(t.available);
-        if (session.isOnlyChecking) {
-          addResponse(t.interestedInBooking, [t.options.book, t.backToMainMenu]);
-        } else {
-          // Avoid duplicate selection if tests already selected via Package View
-          if (session.bookingData.testNames && session.bookingData.testNames.length > 0) {
+      // GPS path: customer shared a live WhatsApp location pin. If it lands
+      // inside the service-area radius, proceed as if the PIN check passed.
+      // If not, ask for a PIN as the fallback and stay in AVAILABILITY_CHECK.
+      if (location) {
+        if (isCoordInServiceArea(location.latitude, location.longitude, cfg)) {
+          addResponse(t.available);
+          if (session.isOnlyChecking) {
+            addResponse(t.interestedInBooking, [t.options.book, t.backToMainMenu]);
+          } else if (session.bookingData.testNames && session.bookingData.testNames.length > 0) {
             routeAfterTestsKnown(session, addResponse, t);
           } else {
             session.step = 'TEST_SELECTION';
             addResponse(t.askTest, [...cartPackagesList(session.language || 'en'), t.cancelBooking]);
           }
+        } else {
+          addResponse(t.gpsOutsideArea, [t.changeLocation, t.enterAnotherPin, t.backToMainMenu]);
+        }
+        break;
+      }
+
+      if (value === t.changeLocation || value === t.enterAnotherPin) {
+        addResponse(t.askLocation, [t.backToMainMenu]);
+        break;
+      }
+
+      if (isPinInServiceArea(value, cfg)) {
+        addResponse(t.available);
+        if (session.isOnlyChecking) {
+          addResponse(t.interestedInBooking, [t.options.book, t.backToMainMenu]);
+        } else if (session.bookingData.testNames && session.bookingData.testNames.length > 0) {
+          routeAfterTestsKnown(session, addResponse, t);
+        } else {
+          session.step = 'TEST_SELECTION';
+          addResponse(t.askTest, [...cartPackagesList(session.language || 'en'), t.cancelBooking]);
         }
       } else {
-        // Point 5: Handle unavailability with options
         addResponse(t.serviceUnavailable, [t.changeLocation, t.enterAnotherPin, t.backToMainMenu]);
       }
       break;
+    }
 
     case 'TEST_SELECTION': {
       const lang = session.language || 'en';
@@ -595,7 +651,9 @@ export async function handleWhatsAppMessage(from: string, incomingBody: string):
         paymentMethod: method,
         bookingId: bId,
         status: 'Created',
-        createdAt: new Date().toISOString()
+        createdAt: new Date().toISOString(),
+        language: session.language || 'en',
+        bookingSource: 'whatsapp' as const,
       };
 
       try {
@@ -613,17 +671,7 @@ export async function handleWhatsAppMessage(from: string, incomingBody: string):
         await upsertPatientProfile(from, {}, session.bookingData.patientId);
 
         session.step = 'COMPLETED';
-        const receiptPrice = computeBookingPrice(session.bookingData.testNames || [], session.bookingData.ecgAddon || false);
-        const receipt =
-          `*🧾 ${t.success}*\n\n` +
-          `*${t.bookingId}:* ${bId}\n` +
-          `*Patient:* ${session.bookingData.patientName} (${session.bookingData.patientAge})\n` +
-          `*Tests:* ${(session.bookingData.testNames || []).join(', ')}\n` +
-          `*Price:* ₹${receiptPrice}\n` +
-          `*Address:* ${session.bookingData.patientAddress || '-'}\n` +
-          `*Slot:* ${session.bookingData.timeSlot || '-'}\n` +
-          `*Payment:* ${method}\n\n` +
-          `${t.phlebMsg}`;
+        const receipt = buildBookingConfirmation(finalBooking as Booking, session.language || 'en');
         addResponse(receipt, [t.mainMenu, t.endSession]);
       } catch (err) {
         console.error('Save error:', err);

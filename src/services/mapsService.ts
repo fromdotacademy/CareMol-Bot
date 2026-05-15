@@ -1,5 +1,6 @@
-const MELATTUR_COORDS = { lat: 11.0664, lng: 76.2687 };
-const MAX_DISTANCE_KM = 5; // Increased slightly to account for town centroid distances
+// Service-area constants moved to src/services/serviceAreaService.ts so they
+// can be sourced from the live config/booking Firestore doc instead of being
+// hardcoded here. This module retains only pure geo helpers.
 
 export interface GeocodeResult {
   lat: number;
@@ -53,10 +54,4 @@ export function calculateDistance(lat1: number, lon1: number, lat2: number, lon2
 
 function deg2rad(deg: number): number {
   return deg * (Math.PI / 180);
-}
-
-export function isWithinRange(lat: number, lng: number): boolean {
-  const dist = calculateDistance(lat, lng, MELATTUR_COORDS.lat, MELATTUR_COORDS.lng);
-  console.log(`[Maps] Distance calculated: ${dist.toFixed(2)} km (Max: ${MAX_DISTANCE_KM} km)`);
-  return dist <= MAX_DISTANCE_KM;
 }

@@ -6,6 +6,15 @@ export type Priority = 'high' | 'medium' | 'low';
 
 export type StaffRole = 'admin' | 'phlebotomist';
 
+export type BookingSource = 'whatsapp' | 'manual';
+
+// Free-form line item added by admin/phleb during a manual booking.
+// Covers individual tests not in any package, family-plan pricing, and special discounts.
+export interface CustomTest {
+  name: string;
+  price: number;
+}
+
 export interface Booking {
   bookingId: string;
   patientId: string;
@@ -16,6 +25,7 @@ export interface Booking {
   patientPhone: string;
   patientAddress: string;
   testNames: string[];
+  customTests?: CustomTest[]; // admin-added line items; never set by the WhatsApp flow.
   ecgAddon?: boolean; // true when customer opted in to ₹50 ECG add-on. Locked at booking creation.
   timeSlot: string;
   bookingDate?: string; // "YYYY-MM-DD" in Asia/Kolkata. Optional only for legacy bookings; required for new writes.
@@ -30,6 +40,9 @@ export interface Booking {
   priority?: Priority;
   assignedTo?: string; // staff uid (phlebotomist)
   assignedToName?: string;
+  language?: Language;          // captured at booking time so the confirmation message uses the right locale.
+  bookingSource?: BookingSource; // omit/undefined or 'whatsapp' for bot bookings; 'manual' for dashboard bookings.
+  createdBy?: string;            // staff uid that created a manual booking.
 }
 
 // Weekly default working slots for a phlebotomist. Each array holds slotStart
@@ -68,6 +81,13 @@ export interface BookingConfig {
   slots: SlotConfig[];
   maxAdvanceDays: number;
   timezone: string; // e.g. "Asia/Kolkata"
+  // Service-area gate (all optional — helpers fall back to safe defaults if missing).
+  // servicePins:      whitelist of 6-digit PINs accepted as in-area.
+  // serviceCenter:    lat/lng of the service-area center, used by the GPS distance check.
+  // serviceRadiusKm:  radius (km) accepted around serviceCenter.
+  servicePins?: string[];
+  serviceCenter?: { lat: number; lng: number };
+  serviceRadiusKm?: number;
   updatedAt?: string;
   updatedBy?: string;
 }

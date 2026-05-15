@@ -45,6 +45,17 @@ service cloud.firestore {
              data.status in ['Created', 'Assigned', 'Collected', 'Processing', 'Completed'];
     }
 
+    // Booking written by admin/phleb on behalf of a customer. Drops the
+    // userId == auth.uid constraint (userId is the customer's phone here) but
+    // requires the manual-source markers so we can audit / distinguish from
+    // bot-created records.
+    function isValidStaffBooking(data) {
+      return data.keys().hasAll(['bookingId', 'userId', 'patientName', 'status', 'createdAt', 'bookingSource', 'createdBy']) &&
+             data.status == 'Created' &&
+             data.bookingSource == 'manual' &&
+             data.createdBy == request.auth.uid;
+    }
+
     // Status transitions a phlebotomist is allowed to perform.
     // Final Processing→Completed step is reserved for admins.
     function phlebStatusOK() {
@@ -85,7 +96,8 @@ service cloud.firestore {
                           (isPhlebotomist() && resource.data.assignedTo == request.auth.uid) ||
                           (isPhlebotomist() && resource.data.status == 'Created');
 
-      allow create: if isSignedIn() && isValidBooking(incoming());
+      allow create: if (isSignedIn() && isValidBooking(incoming())) ||
+                       ((isAdmin() || isPhlebotomist()) && isValidStaffBooking(incoming()));
 
       allow update: if (
         // Owner: edit details only while still 'Created'.
@@ -96,7 +108,7 @@ service cloud.firestore {
       ) || (
         // Admin: status, price, assignedTo (incl. reassignment), priority, and
         // date/slot rescheduling.
-        isAdmin() && incoming().diff(existing()).affectedKeys().hasOnly(['status', 'price', 'assignedTo', 'assignedToName', 'priority', 'testNames', 'notes', 'bookingDate', 'slotStart', 'slotEnd', 'timeSlot'])
+        isAdmin() && incoming().diff(existing()).affectedKeys().hasOnly(['status', 'price', 'assignedTo', 'assignedToName', 'priority', 'testNames', 'customTests', 'notes', 'bookingDate', 'slotStart', 'slotEnd', 'timeSlot'])
       ) || (
         // Phlebotomist: self-assign an unclaimed 'Created' booking.
         isPhlebotomist() &&
@@ -111,7 +123,7 @@ service cloud.firestore {
         existing().assignedTo == request.auth.uid &&
         incoming().assignedTo == request.auth.uid &&
         phlebStatusOK() &&
-        incoming().diff(existing()).affectedKeys().hasOnly(['testNames', 'price', 'status', 'notes'])
+        incoming().diff(existing()).affectedKeys().hasOnly(['testNames', 'customTests', 'price', 'status', 'notes'])
       );
     }
 

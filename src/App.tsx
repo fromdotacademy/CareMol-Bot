@@ -34,7 +34,7 @@ import {
   Trash2
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
-import { geocodeLocation, isWithinRange } from './services/mapsService';
+import { isCoordInServiceArea, isPinInServiceArea, toServiceAreaConfig } from './services/serviceAreaService';
 import { db, auth } from './lib/firebase';
 import {
   collection,
@@ -68,6 +68,7 @@ import {
   TRANSLATIONS,
   PACKAGES,
   computeBookingPrice,
+  computeBookingTotal,
   getPackageByName,
   getPackagePrice,
   isFamilyPlan,
@@ -76,7 +77,10 @@ import {
   cartPackagesList,
   formatPackageDetail,
 } from './constants';
-import { Booking, BookingStatus, Language, ChatStep, PatientProfile, Staff, StaffRole, BookingConfig, PhlebAvailability, WeeklySchedule, SlotConfig } from './types';
+import { Booking, BookingStatus, CustomTest, Language, ChatStep, PatientProfile, Staff, StaffRole, BookingConfig, PhlebAvailability, WeeklySchedule, SlotConfig } from './types';
+import { buildBookingConfirmation } from './services/confirmationMessage';
+import { upsertPatientWeb } from './services/patientService';
+import { NewBookingModal } from './components/NewBookingModal';
 import { generateId, cn } from './lib/utils';
 import { format } from 'date-fns';
 import {
@@ -222,28 +226,6 @@ function handleFirestoreError(error: unknown, operationType: OperationType, path
   };
   console.error('Firestore Error: ', JSON.stringify(errInfo));
   throw new Error(JSON.stringify(errInfo));
-}
-
-// --- PATIENT PROFILE HELPER ---
-
-// Create or update a patient profile under users/{userId}/patients/{patientId}.
-// Mirrors upsertPatientProfile in src/services/botLogic.ts.
-async function upsertPatientWeb(
-  userId: string,
-  fields: Partial<PatientProfile>,
-  existingId?: string
-): Promise<string> {
-  const patientId = existingId || generateId('PT');
-  const ref = doc(db, 'users', userId, 'patients', patientId);
-  const payload: any = {
-    ...fields,
-    id: patientId,
-    userId,
-    updatedAt: serverTimestamp(),
-  };
-  if (!existingId) payload.createdAt = serverTimestamp();
-  await setDoc(ref, payload, { merge: true });
-  return patientId;
 }
 
 // --- ERROR BOUNDARY ---
@@ -691,6 +673,7 @@ function DashboardView({ onError }: { onError: (err: Error) => void }) {
   const [selectedPatientId, setSelectedPatientId] = useState<string | null>(null);
   const [editingBookingId, setEditingBookingId] = useState<string | null>(null);
   const [overrideForBooking, setOverrideForBooking] = useState<Set<string>>(new Set());
+  const [newBookingOpen, setNewBookingOpen] = useState(false);
   const config = useBookingConfig();
 
   useEffect(() => {
@@ -900,6 +883,17 @@ function DashboardView({ onError }: { onError: (err: Error) => void }) {
         <StatCard title="Action Needed" value={stats.pending} icon={<AlertTriangle className="w-5 h-5 text-amber-500" />} />
         <StatCard title="Samples in Transit" value={stats.inTransit} icon={<Clock className="w-5 h-5 text-blue-500" />} />
         <StatCard title="Completed Today" value={stats.completed} icon={<CheckCircle2 className="w-5 h-5 text-green-500" />} />
+      </div>
+
+      {/* Primary action — always visible, regardless of active tab. */}
+      <div className="flex items-center justify-end">
+        <button
+          onClick={() => setNewBookingOpen(true)}
+          className="px-4 py-2 text-xs font-bold uppercase tracking-wider rounded-lg bg-primary text-white hover:opacity-90 shadow-sm flex items-center gap-2"
+        >
+          <Plus className="w-4 h-4" />
+          New Booking
+        </button>
       </div>
 
       {/* Tab Toggle */}
@@ -1222,6 +1216,14 @@ function DashboardView({ onError }: { onError: (err: Error) => void }) {
           onSave={(tests) => { saveTestsForBooking(editingBooking, tests); setEditingBookingId(null); }}
         />
       )}
+
+      {newBookingOpen && (
+        <NewBookingModal
+          staffRole="admin"
+          staffName={auth.currentUser?.displayName || auth.currentUser?.email || "Admin"}
+          onClose={() => setNewBookingOpen(false)}
+        />
+      )}
     </div>
   );
 }
@@ -1294,7 +1296,7 @@ function PatientsView({
               <div className="flex-1 min-w-0">
                 <div className="font-bold text-sm text-text-dark truncate">{p.name || 'Unnamed'}</div>
                 <div className="text-[10px] text-text-muted truncate">
-                  {p.phone || 'no phone'} · {p.userId}
+                  {p.phone || 'no phone'} · {p.age ? `${p.age} yrs` : '?'} · {p.gender || '—'}
                 </div>
               </div>
             </button>
@@ -1755,6 +1757,12 @@ function DefaultScheduleEditor({
 function SettingsView({ config, onError }: { config: BookingConfig; onError: (err: Error) => void }) {
   const [slots, setSlots] = useState<SlotConfig[]>(config.slots);
   const [maxAdvanceDays, setMaxAdvanceDays] = useState<number>(config.maxAdvanceDays);
+  const [servicePins, setServicePins] = useState<string[]>(config.servicePins?.length ? config.servicePins : ['679326']);
+  const [pinDraft, setPinDraft] = useState('');
+  const [serviceRadiusKm, setServiceRadiusKm] = useState<number>(typeof config.serviceRadiusKm === 'number' ? config.serviceRadiusKm : 5);
+  const [serviceCenterLat, setServiceCenterLat] = useState<number>(config.serviceCenter?.lat ?? 11.0664);
+  const [serviceCenterLng, setServiceCenterLng] = useState<number>(config.serviceCenter?.lng ?? 76.2687);
+  const [editCoords, setEditCoords] = useState(false);
   const [saving, setSaving] = useState(false);
   const [dirty, setDirty] = useState(false);
   const [savedFlash, setSavedFlash] = useState(false);
@@ -1765,6 +1773,10 @@ function SettingsView({ config, onError }: { config: BookingConfig; onError: (er
     if (!dirty) {
       setSlots(config.slots);
       setMaxAdvanceDays(config.maxAdvanceDays);
+      setServicePins(config.servicePins?.length ? config.servicePins : ['679326']);
+      setServiceRadiusKm(typeof config.serviceRadiusKm === 'number' ? config.serviceRadiusKm : 5);
+      setServiceCenterLat(config.serviceCenter?.lat ?? 11.0664);
+      setServiceCenterLng(config.serviceCenter?.lng ?? 76.2687);
     }
   }, [config, dirty]);
 
@@ -1784,8 +1796,34 @@ function SettingsView({ config, onError }: { config: BookingConfig; onError: (er
     if (!Number.isInteger(maxAdvanceDays) || maxAdvanceDays < 1 || maxAdvanceDays > 30) {
       return 'Max advance days must be a whole number between 1 and 30.';
     }
+    if (servicePins.length === 0) return 'At least one service-area PIN is required.';
+    for (const pin of servicePins) {
+      if (!/^\d{6}$/.test(pin)) return `Invalid PIN "${pin}" — must be exactly 6 digits.`;
+    }
+    if (!Number.isFinite(serviceRadiusKm) || serviceRadiusKm < 1 || serviceRadiusKm > 50) {
+      return 'Service radius must be a number between 1 and 50 km.';
+    }
+    if (!Number.isFinite(serviceCenterLat) || serviceCenterLat < -90 || serviceCenterLat > 90) {
+      return 'Service center latitude must be between -90 and 90.';
+    }
+    if (!Number.isFinite(serviceCenterLng) || serviceCenterLng < -180 || serviceCenterLng > 180) {
+      return 'Service center longitude must be between -180 and 180.';
+    }
     return null;
-  }, [slots, maxAdvanceDays]);
+  }, [slots, maxAdvanceDays, servicePins, serviceRadiusKm, serviceCenterLat, serviceCenterLng]);
+
+  const addPin = () => {
+    const trimmed = pinDraft.trim();
+    if (!/^\d{6}$/.test(trimmed)) return;
+    if (servicePins.includes(trimmed)) { setPinDraft(''); return; }
+    setServicePins([...servicePins, trimmed]);
+    setPinDraft('');
+    setDirty(true);
+  };
+  const removePin = (pin: string) => {
+    setServicePins(servicePins.filter(p => p !== pin));
+    setDirty(true);
+  };
 
   const addSlot = () => {
     const last = slots[slots.length - 1];
@@ -1813,6 +1851,9 @@ function SettingsView({ config, onError }: { config: BookingConfig; onError: (er
         slots,
         maxAdvanceDays,
         timezone: config.timezone || 'Asia/Kolkata',
+        servicePins,
+        serviceRadiusKm,
+        serviceCenter: { lat: serviceCenterLat, lng: serviceCenterLng },
         updatedAt: new Date().toISOString(),
         updatedBy: auth.currentUser?.uid || null,
       }, { merge: true });
@@ -1915,6 +1956,99 @@ function SettingsView({ config, onError }: { config: BookingConfig; onError: (er
             />
             <span className="text-xs font-bold text-text-dark">days ahead.</span>
           </div>
+        </section>
+
+        <section>
+          <h4 className="text-[10px] font-black text-text-muted uppercase tracking-widest mb-3">Service Area PINs</h4>
+          <div className="flex flex-wrap gap-2 mb-2">
+            {servicePins.map((pin) => (
+              <span key={pin} className="inline-flex items-center gap-1 bg-primary/10 text-primary text-xs font-bold px-2.5 py-1 rounded-full">
+                {pin}
+                <button
+                  onClick={() => removePin(pin)}
+                  title={`Remove ${pin}`}
+                  className="ml-1 -mr-1 p-0.5 rounded hover:bg-primary/20"
+                >
+                  <X className="w-3 h-3" />
+                </button>
+              </span>
+            ))}
+            {servicePins.length === 0 && (
+              <span className="text-xs text-text-muted italic">No PINs configured — bot will reject every address.</span>
+            )}
+          </div>
+          <div className="flex items-center gap-2">
+            <input
+              type="text"
+              inputMode="numeric"
+              maxLength={6}
+              value={pinDraft}
+              onChange={(e) => setPinDraft(e.target.value.replace(/\D/g, '').slice(0, 6))}
+              onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); addPin(); } }}
+              placeholder="6-digit PIN"
+              className="px-2 py-1 w-32 border border-border-subtle rounded text-sm outline-none focus:border-primary bg-white"
+            />
+            <button
+              onClick={addPin}
+              disabled={!/^\d{6}$/.test(pinDraft.trim()) || servicePins.includes(pinDraft.trim())}
+              className="text-[10px] font-bold text-primary hover:underline flex items-center gap-1 disabled:opacity-40 disabled:no-underline"
+            >
+              <Plus className="w-3 h-3" /> Add PIN
+            </button>
+          </div>
+        </section>
+
+        <section>
+          <h4 className="text-[10px] font-black text-text-muted uppercase tracking-widest mb-3">GPS Service Radius</h4>
+          <p className="text-[11px] text-text-muted mb-2">
+            When a customer shares their live WhatsApp location, the bot accepts them if they're within this many kilometers of the service center.
+          </p>
+          <div className="flex items-center gap-3">
+            <span className="text-xs font-bold text-text-dark">Within</span>
+            <input
+              type="number"
+              min={1}
+              max={50}
+              step={0.5}
+              value={serviceRadiusKm}
+              onChange={(e) => { setServiceRadiusKm(Number(e.target.value)); setDirty(true); }}
+              className="px-2 py-1 w-20 border border-border-subtle rounded text-sm outline-none focus:border-primary bg-white text-center"
+            />
+            <span className="text-xs font-bold text-text-dark">km of</span>
+            <span className="text-xs font-mono text-text-dark">
+              ({serviceCenterLat.toFixed(4)}, {serviceCenterLng.toFixed(4)})
+            </span>
+            <button
+              onClick={() => setEditCoords((v) => !v)}
+              className="text-[10px] font-bold text-primary hover:underline"
+            >
+              {editCoords ? 'Hide coords' : 'Edit coords'}
+            </button>
+          </div>
+          {editCoords && (
+            <div className="mt-3 flex items-center gap-3">
+              <label className="text-[10px] font-bold text-text-muted uppercase tracking-widest">Lat</label>
+              <input
+                type="number"
+                step="any"
+                min={-90}
+                max={90}
+                value={serviceCenterLat}
+                onChange={(e) => { setServiceCenterLat(Number(e.target.value)); setDirty(true); }}
+                className="px-2 py-1 w-32 border border-border-subtle rounded text-sm outline-none focus:border-primary bg-white"
+              />
+              <label className="text-[10px] font-bold text-text-muted uppercase tracking-widest">Lng</label>
+              <input
+                type="number"
+                step="any"
+                min={-180}
+                max={180}
+                value={serviceCenterLng}
+                onChange={(e) => { setServiceCenterLng(Number(e.target.value)); setDirty(true); }}
+                className="px-2 py-1 w-32 border border-border-subtle rounded text-sm outline-none focus:border-primary bg-white"
+              />
+            </div>
+          )}
         </section>
 
         {validation && (
@@ -2212,6 +2346,7 @@ function PhlebotomistDashboard({ user, onError }: { user: FirebaseUser; onError:
   const [unassigned, setUnassigned] = useState<Booking[]>([]);
   const [editingBookingId, setEditingBookingId] = useState<string | null>(null);
   const [showCompleted, setShowCompleted] = useState(false);
+  const [newBookingOpen, setNewBookingOpen] = useState(false);
 
   useEffect(() => {
     // Own assignments (any status)
@@ -2303,10 +2438,25 @@ function PhlebotomistDashboard({ user, onError }: { user: FirebaseUser; onError:
     ? [...myBookings, ...unassigned].find(b => b.bookingId === editingBookingId) || null
     : null;
 
-  const expectedRevenue = active.reduce((sum, b) => sum + (b.price || 0), 0);
+  // Includes packages + admin-added custom items + ECG add-on for both old and new bookings.
+  // Legacy bookings (no customTests) yield the persisted b.price, which is what's already shown.
+  const expectedRevenue = active.reduce((sum, b) => {
+    const computed = computeBookingTotal(b.testNames || [], b.customTests, !!b.ecgAddon);
+    return sum + (computed || b.price || 0);
+  }, 0);
 
   return (
     <div className="space-y-8">
+      <div className="flex items-center justify-end">
+        <button
+          onClick={() => setNewBookingOpen(true)}
+          className="px-3 py-1.5 text-[10px] font-bold uppercase tracking-wider rounded-md bg-primary text-white hover:opacity-90 whitespace-nowrap flex items-center gap-1"
+        >
+          <Plus className="w-3 h-3" />
+          New Booking
+        </button>
+      </div>
+
       <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
         <StatCard title="Today's Assignments" value={active.length} icon={<Calendar className="w-5 h-5 text-blue-500" />} />
         <StatCard title="Unassigned Queue" value={unassigned.length} icon={<AlertTriangle className="w-5 h-5 text-amber-500" />} />
@@ -2377,6 +2527,14 @@ function PhlebotomistDashboard({ user, onError }: { user: FirebaseUser; onError:
           booking={editingBooking}
           onClose={() => setEditingBookingId(null)}
           onSave={(tests) => { saveTests(editingBooking, tests); setEditingBookingId(null); }}
+        />
+      )}
+
+      {newBookingOpen && (
+        <NewBookingModal
+          staffRole="phlebotomist"
+          staffName={user.displayName || user.email || "Phlebotomist"}
+          onClose={() => setNewBookingOpen(false)}
         />
       )}
     </div>
@@ -2690,7 +2848,6 @@ function WhatsAppSimulator({ userId }: { userId: string }) {
   const [inputVisible, setInputVisible] = useState(true);
   const [inputText, setInputText] = useState('');
   const chatEndRef = useRef<HTMLDivElement>(null);
-  const mountTimeRef = useRef(new Date());
 
   const t = language ? TRANSLATIONS[language] : TRANSLATIONS['en'];
   const config = useBookingConfig();
@@ -2792,18 +2949,12 @@ function WhatsAppSimulator({ userId }: { userId: string }) {
     );
     return onSnapshot(q, (snapshot) => {
       snapshot.docChanges().forEach((change) => {
-        if (change.type === 'added') {
-          const data = change.doc.data();
-          const createdAt = data.createdAt?.toDate ? data.createdAt.toDate() : new Date(data.createdAt);
-          
-          // Only show notification if it happened AFTER the component mounted
-          if (data.type === 'REPORT_READY' && language && createdAt > mountTimeRef.current) {
-            addBotMessage(
-              (TRANSLATIONS[language].success || "✅ Success") + "\n" + 
-              (TRANSLATIONS[language].reportReady || "Your report is ready!")
-            );
-          }
-        }
+        if (change.type !== 'added') return;
+        const data = change.doc.data();
+        // REPORT_READY notifications are intentionally suppressed: there is no
+        // live reports portal yet, so surfacing "Your report is ready / Download …"
+        // would be misleading. Re-enable this block when the portal lands.
+        if (data.type === 'REPORT_READY') return;
       });
     }, (error) => {
       console.error('Notification listener error:', error);
@@ -2838,6 +2989,48 @@ function WhatsAppSimulator({ userId }: { userId: string }) {
     const cart = cartPackagesList(language || 'en');
     const remainingOptions = cart.filter(pkg => !currentTests.includes(pkg));
     addBotMessage(msg, [...remainingOptions, t.doneSelecting, t.cancelBooking], false);
+  };
+
+  // Browser-side equivalent of the WhatsApp "share live location" flow.
+  // Asks for geolocation, then either continues past AVAILABILITY_CHECK
+  // (in-area) or asks for a PIN as fallback (out-of-area / denied / unsupported).
+  const requestBrowserLocation = () => {
+    const cfg = toServiceAreaConfig(config);
+    if (typeof navigator === 'undefined' || !navigator.geolocation) {
+      addBotMessage(t.locationUnavailableBrowser, [t.shareLocation, t.backToMainMenu]);
+      return;
+    }
+    // User-bubble so the chat history reflects the action.
+    setMessages(prev => [...prev, {
+      id: Math.random().toString(),
+      text: t.shareLocation,
+      sender: 'user',
+      timestamp: new Date(),
+    }]);
+    navigator.geolocation.getCurrentPosition(
+      (pos) => {
+        const { latitude, longitude } = pos.coords;
+        if (isCoordInServiceArea(latitude, longitude, cfg)) {
+          addBotMessage(t.available);
+          setTimeout(() => {
+            if (isOnlyChecking) {
+              addBotMessage(t.interestedInBooking, [t.options.book, t.backToMainMenu]);
+            } else if (bookingData.testNames && bookingData.testNames.length > 0) {
+              routeAfterTestsKnownWeb(bookingData);
+            } else {
+              promptTestSelection();
+            }
+          }, 800);
+        } else {
+          addBotMessage(t.gpsOutsideArea, [t.changeLocation, t.enterAnotherPin, t.shareLocation, t.backToMainMenu]);
+        }
+      },
+      () => {
+        // Denied / timeout / hardware unavailable.
+        addBotMessage(t.locationUnavailableBrowser, [t.shareLocation, t.backToMainMenu]);
+      },
+      { enableHighAccuracy: false, timeout: 10000, maximumAge: 60000 }
+    );
   };
 
   // Mirrors routeAfterTestsKnown() in botLogic.ts. Decides whether to ask the
@@ -3125,7 +3318,7 @@ function WhatsAppSimulator({ userId }: { userId: string }) {
               patientPhone: sPhone
             }));
             setStep('AVAILABILITY_CHECK');
-            addBotMessage(t.askLocation, [t.backToMainMenu], true);
+            addBotMessage(t.askLocation, [t.shareLocation, t.backToMainMenu], true);
           } catch (e) {
             console.error('[Simulator] Failed to save patient profile', e);
             addBotMessage("❌ Could not save details. Please try again.", [t.cancelBooking], true);
@@ -3175,37 +3368,33 @@ function WhatsAppSimulator({ userId }: { userId: string }) {
           }
           break;
 
-        case 'AVAILABILITY_CHECK':
+        case 'AVAILABILITY_CHECK': {
           const inputLoc = value.trim();
           if (inputLoc === t.changeLocation || inputLoc === t.enterAnotherPin) {
-            addBotMessage(t.askLocation, [t.backToMainMenu], true);
+            addBotMessage(t.askLocation, [t.shareLocation, t.backToMainMenu], true);
             return;
           }
-          const normalizedInput = inputLoc.replace(/\s/g, '');
-          const melatturPin = '679326';
-          
-          // Fast track known local PINs
-          const isKnownLocal = normalizedInput.includes(melatturPin);
-
-          if (isKnownLocal) {
+          if (inputLoc === t.shareLocation) {
+            requestBrowserLocation();
+            return;
+          }
+          const cfg = toServiceAreaConfig(config);
+          if (isPinInServiceArea(inputLoc, cfg)) {
             addBotMessage(t.available);
             setTimeout(() => {
               if (isOnlyChecking) {
                 addBotMessage(t.interestedInBooking, [t.options.book, t.backToMainMenu]);
+              } else if (bookingData.testNames && bookingData.testNames.length > 0) {
+                routeAfterTestsKnownWeb(bookingData);
               } else {
-                // Avoid duplicate selection if tests already selected via Package View
-                if (bookingData.testNames && bookingData.testNames.length > 0) {
-                  routeAfterTestsKnownWeb(bookingData);
-                } else {
-                  promptTestSelection();
-                }
+                promptTestSelection();
               }
             }, 800);
           } else {
-            // Point 5: Service unavailability handling
-            addBotMessage(t.serviceUnavailable, [t.changeLocation, t.enterAnotherPin, t.backToMainMenu]);
+            addBotMessage(t.serviceUnavailable, [t.changeLocation, t.enterAnotherPin, t.shareLocation, t.backToMainMenu]);
           }
           break;
+        }
 
         case 'TEST_SELECTION': {
           const lang = language || 'en';
@@ -3389,7 +3578,9 @@ function WhatsAppSimulator({ userId }: { userId: string }) {
             paymentMethod: currentMethod,
             bookingId: finalId,
             status: 'Created',
-            createdAt: serverTimestamp()
+            createdAt: serverTimestamp(),
+            language: language || 'en',
+            bookingSource: 'whatsapp',
           };
 
           try {
@@ -3406,17 +3597,12 @@ function WhatsAppSimulator({ userId }: { userId: string }) {
             await upsertPatientWeb(userId, {}, bookingData.patientId);
 
             setStep('COMPLETED');
-            const receiptPrice = computeBookingPrice(bookingData.testNames || [], bookingData.ecgAddon || false);
-            const receipt =
-              `*🧾 ${t.success}*\n\n` +
-              `*${t.bookingId}:* ${finalId}\n` +
-              `*Patient:* ${bookingData.patientName} (${bookingData.patientAge})\n` +
-              `*Tests:* ${(bookingData.testNames || []).join(', ')}\n` +
-              `*Price:* ₹${receiptPrice}\n` +
-              `*Address:* ${bookingData.patientAddress || '-'}\n` +
-              `*Slot:* ${bookingData.timeSlot || '-'}\n` +
-              `*Payment:* ${currentMethod}\n\n` +
-              `${t.phlebMsg}`;
+            // Build a Booking-shaped view of the just-written record (serverTimestamp() is
+            // a sentinel, not a string — substitute a real ISO for the receipt builder).
+            const receipt = buildBookingConfirmation(
+              { ...(newBooking as Booking), bookingId: finalId },
+              language || 'en'
+            );
             addBotMessage(receipt, [t.mainMenu, t.endSession]);
           } catch (e) {
             console.error('Save error:', e);

@@ -27,6 +27,18 @@ async function init() {
     const { handleWhatsAppMessage } = await import("./src/services/botLogic");
     const { sendWhatsAppMessage } = await import("./src/services/whatsappService");
     const { HARDCODED_ADMIN_EMAILS } = await import("./src/lib/adminEmails");
+    const { buildBookingConfirmation } = await import("./src/services/confirmationMessage");
+    const isStaff = async (decoded: { uid: string; email?: string }): Promise<{ ok: boolean; role?: "admin" | "phlebotomist" }> => {
+      if (decoded.email && HARDCODED_ADMIN_EMAILS.has(decoded.email)) {
+        return { ok: true, role: "admin" };
+      }
+      const snap = await adminDb.collection("staff").doc(decoded.uid).get();
+      const data = snap.exists ? snap.data() : null;
+      if (data && data.active === true && (data.role === "admin" || data.role === "phlebotomist")) {
+        return { ok: true, role: data.role };
+      }
+      return { ok: false };
+    };
 
     app.use(express.json());
 
@@ -105,6 +117,72 @@ async function init() {
       }
     });
 
+    // Manual-booking confirmation: send the WhatsApp receipt for a booking
+    // that was just written by admin/phleb from the dashboard. Idempotent —
+    // the customer simply gets another receipt if it's called twice.
+    app.post("/api/bookings/:id/notify", async (req, res) => {
+      try {
+        const authHeader = req.headers.authorization || "";
+        const idToken = authHeader.startsWith("Bearer ") ? authHeader.slice(7) : "";
+        if (!idToken) return res.status(401).json({ error: "Missing token" });
+
+        let decoded;
+        try {
+          decoded = await admin.auth().verifyIdToken(idToken);
+        } catch {
+          return res.status(401).json({ error: "Invalid token" });
+        }
+
+        const staffCheck = await isStaff({ uid: decoded.uid, email: decoded.email });
+        if (!staffCheck.ok) return res.status(403).json({ error: "Staff only" });
+
+        const bookingId = String(req.params.id || "").trim();
+        if (!bookingId) return res.status(400).json({ error: "Missing booking id" });
+
+        const snap = await adminDb.collection("bookings").doc(bookingId).get();
+        if (!snap.exists) return res.status(404).json({ error: "Booking not found" });
+        const booking = snap.data() as any;
+
+        const recipient = booking.patientPhone || booking.userId;
+        if (!recipient) return res.status(400).json({ error: "Booking has no phone to notify" });
+
+        // Touch users/{phone} so the customer's WhatsApp number is registered for
+        // downstream reads (returning-customer detection, etc.). Admin SDK bypasses
+        // rules — clients can't do this for arbitrary userIds.
+        try {
+          await adminDb.collection("users").doc(String(recipient)).set(
+            {
+              userId: String(recipient),
+              phoneNumber: String(recipient),
+              name: booking.patientName,
+              language: booking.language || "en",
+              lastActive: new Date().toISOString(),
+            },
+            { merge: true }
+          );
+        } catch (e) {
+          console.warn("[notify] users/{phone} touch failed (continuing)", e);
+        }
+
+        if (!process.env.WHATSAPP_TOKEN || !process.env.WHATSAPP_PHONE_ID) {
+          return res.json({ ok: true, sent: false, reason: "no-whatsapp-creds" });
+        }
+
+        const language = booking.language === "ml" ? "ml" : "en";
+        const message = buildBookingConfirmation(booking, language);
+
+        try {
+          await sendWhatsAppMessage(String(recipient), message);
+          return res.json({ ok: true, sent: true });
+        } catch (e: any) {
+          return res.status(502).json({ ok: false, sent: false, error: e.message || String(e) });
+        }
+      } catch (err: any) {
+        console.error("[POST /api/bookings/:id/notify]", err);
+        return res.status(500).json({ error: err.message || String(err) });
+      }
+    });
+
     // Routing
     app.get("/api/whatsapp/webhook", (req, res) => {
       const mode = req.query["hub.mode"];
@@ -124,11 +202,22 @@ async function init() {
           if (messages?.[0]) {
             const msg = messages[0];
             const from = msg.from;
-            const text = msg.type === "text" ? msg.text.body : 
+            const text = msg.type === "text" ? msg.text.body :
                         (msg.type === "interactive" ? (msg.interactive.button_reply?.title || msg.interactive.list_reply?.title) : "");
-            
-            if (text) {
-              const responses = await handleWhatsAppMessage(from, text);
+
+            // WhatsApp "location" messages carry { latitude, longitude } (and optional
+            // name/address). Coords are sometimes delivered as strings — coerce defensively.
+            let location: { latitude: number; longitude: number } | null = null;
+            if (msg.type === "location" && msg.location) {
+              const lat = Number(msg.location.latitude);
+              const lng = Number(msg.location.longitude);
+              if (Number.isFinite(lat) && Number.isFinite(lng)) {
+                location = { latitude: lat, longitude: lng };
+              }
+            }
+
+            if (text || location) {
+              const responses = await handleWhatsAppMessage(from, text, location);
               for (const r of responses) {
                 await sendWhatsAppMessage(from, r.text, r.buttons);
               }

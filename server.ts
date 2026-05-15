@@ -143,6 +143,29 @@ async function init() {
       }
     });
 
+    // Dev-only: generate a Firebase custom token for the hardcoded admin.
+    // Used by Playwright auth setup so tests never need Google OAuth.
+    if (process.env.NODE_ENV !== "production") {
+      app.get("/api/dev-token", async (req, res) => {
+        try {
+          const adminEmails = ["tubejaf@gmail.com", "fromdotacademy@gmail.com"];
+          let uid: string | null = null;
+          for (const email of adminEmails) {
+            try {
+              const user = await admin.auth().getUserByEmail(email);
+              uid = user.uid;
+              break;
+            } catch { /* try next */ }
+          }
+          if (!uid) return res.status(404).json({ error: "No hardcoded admin user found in Firebase Auth" });
+          const token = await admin.auth().createCustomToken(uid);
+          res.json({ token, uid });
+        } catch (err) {
+          res.status(500).json({ error: String(err) });
+        }
+      });
+    }
+
     // Frontend Serving
     if (process.env.NODE_ENV !== "production") {
       console.log("[BOOT] Enabling Vite middleware (Development)");

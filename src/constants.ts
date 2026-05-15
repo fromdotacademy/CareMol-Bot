@@ -1,3 +1,253 @@
+export type EcgPolicy = 'included' | 'addon' | 'not-applicable';
+export type PackageCategory = 'individual' | 'special' | 'family';
+export type PackageBadge = 'MOST BOOKED' | 'DOCTOR REC.' | 'PREMIUM';
+export type SupportedLanguage = 'en' | 'ml';
+
+export interface PackageInfo {
+  id: string;
+  name_en: string;
+  name_ml: string;
+  tagline_en: string;
+  tagline_ml: string;
+  price: number;                  // 0 for family plans (not bookable in chat)
+  mrp: number;
+  tests: string;                  // English clinical terms, comma-separated
+  ecgPolicy: EcgPolicy;
+  homePickupMonths: 2 | 3 | 6 | null;
+  badge?: PackageBadge;
+  category: PackageCategory;
+  members?: '2-3' | '3-4' | '4-5'; // family-plan only
+  priceRange?: [number, number];   // family-plan only
+}
+
+export const ECG_ADDON_PRICE = 50;
+
+export const PACKAGES: readonly PackageInfo[] = [
+  // ─── Individual Packages ───
+  {
+    id: 'basic-health',
+    name_en: 'Basic Health',
+    name_ml: 'ബേസിക് ഹെൽത്ത്',
+    tagline_en: '10–15 Tests · Routine Essential',
+    tagline_ml: '10–15 ടെസ്റ്റുകൾ · റൂട്ടീൻ എസെൻഷ്യൽ',
+    price: 299,
+    mrp: 500,
+    tests: 'Blood Sugar (Fasting), Lipid Profile, BP · Weight · BMI',
+    ecgPolicy: 'addon',
+    homePickupMonths: 2,
+    category: 'individual',
+  },
+  {
+    id: 'smart-care',
+    name_en: 'Smart Care',
+    name_ml: 'സ്മാർട്ട് കെയർ',
+    tagline_en: '20–30 Tests · Active Lifestyle',
+    tagline_ml: '20–30 ടെസ്റ്റുകൾ · ആക്ടീവ് ലൈഫ്സ്റ്റൈൽ',
+    price: 999,
+    mrp: 1300,
+    tests: 'Blood Sugar (Fasting), HbA1c, Lipid Profile, CBC, Creatinine (KFT), SGPT (Liver Fn.), Physique Check',
+    ecgPolicy: 'addon',
+    homePickupMonths: 2,
+    badge: 'MOST BOOKED',
+    category: 'individual',
+  },
+  {
+    id: 'pro-care',
+    name_en: 'Pro Care',
+    name_ml: 'പ്രോ കെയർ',
+    tagline_en: '40–50 Tests · Preventive Screening',
+    tagline_ml: '40–50 ടെസ്റ്റുകൾ · പ്രിവൻ്റീവ് സ്ക്രീനിംഗ്',
+    price: 1549,
+    mrp: 1949,
+    tests: 'CBC + ESR, Thyroid (TSH), Liver & Kidney Function, Blood Sugar + HbA1c, Urine Routine, Physique Check',
+    ecgPolicy: 'included',
+    homePickupMonths: 3,
+    badge: 'DOCTOR REC.',
+    category: 'individual',
+  },
+  {
+    id: 'elite-care',
+    name_en: 'Elite Care',
+    name_ml: 'എലൈറ്റ് കെയർ',
+    tagline_en: '60+ Tests · Max Protection',
+    tagline_ml: '60+ ടെസ്റ്റുകൾ · പരമാവധി സംരക്ഷണം',
+    price: 2549,
+    mrp: 3049,
+    tests: 'All Pro Care tests + Thyroid Full Panel (TFT), Vitamin D · Calcium, Electrolytes',
+    ecgPolicy: 'included',
+    homePickupMonths: 6,
+    badge: 'PREMIUM',
+    category: 'individual',
+  },
+
+  // ─── Special Packages ───
+  {
+    id: 'women-wellness',
+    name_en: 'Women Wellness',
+    name_ml: 'വിമൻ വെൽനസ്',
+    tagline_en: 'Hormones · Energy · Deficiencies',
+    tagline_ml: 'ഹോർമോണുകൾ · എനർജി · കുറവുകൾ',
+    price: 1299,
+    mrp: 1599,
+    tests: 'CBC, Thyroid (T3, T4, TSH), Vitamin D · Calcium, Urine Routine, Physique Check',
+    ecgPolicy: 'addon',
+    homePickupMonths: 2,
+    category: 'special',
+  },
+  {
+    id: 'diabetes-care',
+    name_en: 'Diabetes Care',
+    name_ml: 'ഡയബറ്റീസ് കെയർ',
+    tagline_en: 'Monitor & Manage Sugar Levels',
+    tagline_ml: 'ഷുഗർ ലെവൽ നിരീക്ഷിക്കുക & കൈകാര്യം ചെയ്യുക',
+    price: 999,
+    mrp: 1299,
+    tests: 'Blood Sugar (F+PP), HbA1c, Lipid Profile, KFT, Urine Microalbumin, Physique Check',
+    ecgPolicy: 'addon',
+    homePickupMonths: 2,
+    category: 'special',
+  },
+
+  // ─── Family Plans (info-only — phone consultation required) ───
+  {
+    id: 'family-basic',
+    name_en: 'Family Basic',
+    name_ml: 'ഫാമിലി ബേസിക്',
+    tagline_en: '2–3 members · Basic Health',
+    tagline_ml: '2–3 അംഗങ്ങൾ · ബേസിക് ഹെൽത്ത്',
+    price: 0,
+    mrp: 0,
+    tests: 'Basic Health package for every family member',
+    ecgPolicy: 'not-applicable',
+    homePickupMonths: null,
+    category: 'family',
+    members: '2-3',
+    priceRange: [999, 1499],
+  },
+  {
+    id: 'family-smart',
+    name_en: 'Family Smart',
+    name_ml: 'ഫാമിലി സ്മാർട്ട്',
+    tagline_en: '3–4 members · Smart Care',
+    tagline_ml: '3–4 അംഗങ്ങൾ · സ്മാർട്ട് കെയർ',
+    price: 0,
+    mrp: 0,
+    tests: 'Smart Care package for every family member',
+    ecgPolicy: 'not-applicable',
+    homePickupMonths: null,
+    category: 'family',
+    members: '3-4',
+    priceRange: [1999, 2999],
+  },
+  {
+    id: 'family-complete',
+    name_en: 'Family Complete',
+    name_ml: 'ഫാമിലി കംപ്ലീറ്റ്',
+    tagline_en: '4–5 members · Pro Care / Mixed',
+    tagline_ml: '4–5 അംഗങ്ങൾ · പ്രോ കെയർ / Mixed',
+    price: 0,
+    mrp: 0,
+    tests: 'Pro Care or mixed packages for every family member',
+    ecgPolicy: 'not-applicable',
+    homePickupMonths: null,
+    category: 'family',
+    members: '4-5',
+    priceRange: [3499, 4999],
+  },
+];
+
+// ─── Package helpers (single source of truth for both bot implementations) ───
+
+export function getPackageByName(name: string, lang?: SupportedLanguage): PackageInfo | undefined {
+  if (lang === 'en') {
+    const hit = PACKAGES.find(p => p.name_en === name);
+    if (hit) return hit;
+  } else if (lang === 'ml') {
+    const hit = PACKAGES.find(p => p.name_ml === name);
+    if (hit) return hit;
+  }
+  return PACKAGES.find(p => p.name_en === name || p.name_ml === name);
+}
+
+export function getPackagePrice(name: string): number {
+  return getPackageByName(name)?.price ?? 0;
+}
+
+export function isFamilyPlan(name: string): boolean {
+  return getPackageByName(name)?.category === 'family';
+}
+
+export function eligibleForEcgAddon(testNames: string[]): boolean {
+  return testNames.some(n => getPackageByName(n)?.ecgPolicy === 'addon');
+}
+
+export function computeBookingPrice(testNames: string[], ecgAddon: boolean): number {
+  const base = testNames.reduce((sum, n) => sum + getPackagePrice(n), 0);
+  return base + (ecgAddon ? ECG_ADDON_PRICE : 0);
+}
+
+export function browserPackagesList(lang: SupportedLanguage): string[] {
+  return PACKAGES.map(p => (lang === 'ml' ? p.name_ml : p.name_en));
+}
+
+export function cartPackagesList(lang: SupportedLanguage): string[] {
+  return PACKAGES.filter(p => p.category !== 'family').map(p => (lang === 'ml' ? p.name_ml : p.name_en));
+}
+
+// Renders the WhatsApp body text for a package detail screen.
+// Used by both botLogic.ts (server) and the WhatsAppSimulator (client) so the
+// two implementations stay byte-identical.
+export function formatPackageDetail(pkg: PackageInfo, lang: SupportedLanguage): string {
+  const t = TRANSLATIONS[lang];
+  const name = lang === 'ml' ? pkg.name_ml : pkg.name_en;
+  const tagline = lang === 'ml' ? pkg.tagline_ml : pkg.tagline_en;
+  const badgeLine =
+    pkg.badge === 'MOST BOOKED' ? t.badgeMostBooked :
+    pkg.badge === 'DOCTOR REC.' ? t.badgeDoctorRec :
+    pkg.badge === 'PREMIUM'     ? t.badgePremium :
+    null;
+  const savings = pkg.mrp - pkg.price;
+  const priceLine = savings > 0
+    ? `~₹${pkg.mrp}~  *₹${pkg.price}*  (${t.savePrefix.replace('{amount}', String(savings))})`
+    : `*₹${pkg.price}*`;
+  const ecgLine = pkg.ecgPolicy === 'included' ? t.ecgIncludedLabel
+                : pkg.ecgPolicy === 'addon'    ? t.ecgAddonAvailableLabel
+                : null;
+  const pickupLine = pkg.homePickupMonths
+    ? t.homePickupLabel.replace('{n}', String(pkg.homePickupMonths))
+    : null;
+  const lines: (string | null)[] = [
+    `*${name}*`,
+    tagline,
+    badgeLine,
+    '',
+    t.packageIncludes.replace('{details}', pkg.tests),
+    '',
+    priceLine,
+    ecgLine,
+    pickupLine,
+  ];
+  return lines.filter(line => line !== null).join('\n');
+}
+
+// ─── Backward-compat derived exports (TestPickerModal + legacy reduce sites) ───
+
+/** @deprecated use getPackagePrice() */
+export const TEST_PRICES: Record<string, number> = Object.fromEntries(
+  PACKAGES.flatMap(p => [
+    [p.name_en, p.price],
+    [p.name_ml, p.price],
+  ])
+);
+
+/** @deprecated use getPackageByName(name)?.tests */
+export const PACKAGE_DESCRIPTIONS: Record<string, string> = Object.fromEntries(
+  PACKAGES.flatMap(p => [
+    [p.name_en, p.tests],
+    [p.name_ml, p.tests],
+  ])
+);
+
 export const TRANSLATIONS = {
   en: {
     welcome: "Welcome to CareMol – Care Close to You",
@@ -21,7 +271,6 @@ export const TRANSLATIONS = {
     available: "Service available in your area ✅",
     unavailable: "Currently we serve only within 5 km of Melattur",
     askTest: "What test do you want to book?",
-    packagesList: ["Basic Health Check", "Diabetes Profile", "Full Body Checkup"],
     patientName: "Enter patient name",
     patientAge: "Enter age",
     patientGender: "Select gender",
@@ -105,7 +354,7 @@ export const TRANSLATIONS = {
       "Available Locations": "📍 *Available Locations*\n\nWe currently serve homes within 5 km of Melattur (PIN 679326). More locations coming soon!",
       "Working Hours": "🕐 *Working Hours*\n\n[TODO: fill in working hours, e.g., Mon–Sat 7:00 AM – 8:00 PM, Sun 8:00 AM – 1:00 PM]",
       "Sample Collection Timing": "🧪 *Sample Collection Timing*\n\nMorning slots are recommended for fasting tests. Available time slots:\n• 08:00 AM – 10:00 AM\n• 10:00 AM – 12:00 PM\n• 02:00 PM – 04:00 PM\n• 04:00 PM – 06:00 PM",
-      "Report Delivery Time": "📄 *Report Delivery Time*\n\n[TODO: fill in turn-around time per package, e.g., Basic Health Check: same day; Full Body Checkup: 24–48 hrs]",
+      "Report Delivery Time": "📄 *Report Delivery Time*\n\n[TODO: fill in turn-around time per package, e.g., Basic Health: same day; Elite Care: 24–48 hrs]",
       "Payment Methods": "💳 *Payment Methods*\n\nWe accept:\n• UPI (at booking)\n• Cash on Collection",
       "Refund / Cancellation": "↩️ *Refund / Cancellation*\n\n[TODO: fill in cancellation window and refund policy]",
       "Doctor Consultation": "👨‍⚕️ *Doctor Consultation*\n\n[TODO: fill in whether doctor consultation is available, and how to request it]",
@@ -119,6 +368,17 @@ export const TRANSLATIONS = {
     monthsShort: ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"],
     advanceLimitError: "Please choose a date within the next {n} days.",
     legacyTimeSlotMissing: "Time slot not set — please pick from the options.",
+    ecgAddonAsk: "💓 Would you like to add an ECG test for just ₹50?",
+    ecgAddonYes: "Yes, add ECG",
+    ecgAddonNo: "No, skip",
+    familyPlanCallPrompt: "*{plan}* is a family plan and needs a phone consultation. Please call us to book — we'll work out the details together.",
+    ecgIncludedLabel: "💓 ECG Included",
+    ecgAddonAvailableLabel: "💓 ECG add-on available (+₹50)",
+    homePickupLabel: "🏠 {n} months home pickup",
+    savePrefix: "Save ₹{amount}",
+    badgeMostBooked: "⭐ MOST BOOKED",
+    badgeDoctorRec: "👨‍⚕️ DOCTOR REC.",
+    badgePremium: "🏆 PREMIUM",
     genderMap: {
       "Male": "Male",
       "Female": "Female",
@@ -147,7 +407,6 @@ export const TRANSLATIONS = {
     available: "നിങ്ങളുടെ പ്രദേശത്ത് സേവനം ലഭ്യമാണ് ✅",
     unavailable: "ഇപ്പോൾ Melattur ചുറ്റുമുള്ള 5 km പരിധിയിൽ മാത്രം സേവനം ലഭ്യമാണ്",
     askTest: "ഏത് ടെസ്റ്റ് ആണ് ബുക്ക് ചെയ്യേണ്ടത്?",
-    packagesList: ["ബേസിക് ഹെൽത്ത് ചെക്ക്", "ഡയബറ്റീസ് പ്രൊഫൈൽ", "ഫുൾ ബോഡി ചെക്കപ്പ്"],
     patientName: "രോഗിയുടെ പേര് നൽകുക",
     patientAge: "പ്രായം നൽകുക",
     patientGender: "ലിംഗം തിരഞ്ഞെടുക്കുക",
@@ -231,7 +490,7 @@ export const TRANSLATIONS = {
       "സർവീസ് ലഭ്യമായ സ്ഥലങ്ങൾ": "📍 *സർവീസ് ലഭ്യമായ സ്ഥലങ്ങൾ*\n\nനിലവിൽ Melattur ചുറ്റും 5 km പരിധിയിൽ (PIN 679326) സേവനം ലഭ്യമാണ്. കൂടുതൽ സ്ഥലങ്ങൾ ഉടൻ ചേർക്കും!",
       "പ്രവൃത്തി സമയം": "🕐 *പ്രവൃത്തി സമയം*\n\n[TODO: പ്രവൃത്തി സമയം ചേർക്കുക, ഉദാ: തിങ്കൾ–ശനി 7:00 AM – 8:00 PM, ഞായർ 8:00 AM – 1:00 PM]",
       "സാമ്പിൾ കളക്ഷൻ സമയം": "🧪 *സാമ്പിൾ കളക്ഷൻ സമയം*\n\nഫാസ്റ്റിംഗ് ടെസ്റ്റുകൾക്ക് രാവിലത്തെ സ്ലോട്ടുകൾ ശുപാർശ ചെയ്യുന്നു. ലഭ്യമായ സമയങ്ങൾ:\n• 08:00 AM – 10:00 AM\n• 10:00 AM – 12:00 PM\n• 02:00 PM – 04:00 PM\n• 04:00 PM – 06:00 PM",
-      "റിപ്പോർട്ട് ലഭ്യമാകുന്ന സമയം": "📄 *റിപ്പോർട്ട് ലഭ്യമാകുന്ന സമയം*\n\n[TODO: ഓരോ പാക്കേജിന്റെയും റിപ്പോർട്ട് സമയം ചേർക്കുക, ഉദാ: ബേസിക് ഹെൽത്ത് ചെക്ക്: അതേ ദിവസം; ഫുൾ ബോഡി ചെക്കപ്പ്: 24–48 മണിക്കൂർ]",
+      "റിപ്പോർട്ട് ലഭ്യമാകുന്ന സമയം": "📄 *റിപ്പോർട്ട് ലഭ്യമാകുന്ന സമയം*\n\n[TODO: ഓരോ പാക്കേജിന്റെയും റിപ്പോർട്ട് സമയം ചേർക്കുക, ഉദാ: ബേസിക് ഹെൽത്ത്: അതേ ദിവസം; എലൈറ്റ് കെയർ: 24–48 മണിക്കൂർ]",
       "പേയ്‌മെന്റ് രീതികൾ": "💳 *പേയ്‌മെന്റ് രീതികൾ*\n\nഞങ്ങൾ സ്വീകരിക്കുന്നത്:\n• UPI (ബുക്കിംഗിൽ)\n• കളക്ഷനിൽ പണം",
       "റീഫണ്ട് / റദ്ദാക്കൽ": "↩️ *റീഫണ്ട് / റദ്ദാക്കൽ*\n\n[TODO: റദ്ദാക്കൽ സമയവും റീഫണ്ട് നയവും ചേർക്കുക]",
       "ഡോക്ടർ കൺസൾട്ടേഷൻ": "👨‍⚕️ *ഡോക്ടർ കൺസൾട്ടേഷൻ*\n\n[TODO: ഡോക്ടർ കൺസൾട്ടേഷൻ ലഭ്യമാണോ എന്നും, എങ്ങനെ അഭ്യർത്ഥിക്കാം എന്നും ചേർക്കുക]",
@@ -245,28 +504,21 @@ export const TRANSLATIONS = {
     monthsShort: ["ജനു", "ഫെബ്രു", "മാർ", "ഏപ്രി", "മേയ്", "ജൂൺ", "ജൂലൈ", "ഓഗ", "സെപ്റ്റം", "ഒക്ടോ", "നവം", "ഡിസം"],
     advanceLimitError: "ദയവായി അടുത്ത {n} ദിവസത്തിനുള്ളിലെ തീയതി തിരഞ്ഞെടുക്കുക.",
     legacyTimeSlotMissing: "സമയം സജ്ജമല്ല — ദയവായി ലിസ്റ്റിൽ നിന്ന് തിരഞ്ഞെടുക്കുക.",
+    ecgAddonAsk: "💓 ₹50-ന് ഒരു ECG ടെസ്റ്റ് കൂടി ചേർക്കണോ?",
+    ecgAddonYes: "അതെ, ECG ചേർക്കുക",
+    ecgAddonNo: "വേണ്ട, ഒഴിവാക്കുക",
+    familyPlanCallPrompt: "*{plan}* ഒരു ഫാമിലി പ്ലാൻ ആണ്, ബുക്കിംഗിന് ഫോൺ കൺസൾട്ടേഷൻ ആവശ്യമാണ്. ദയവായി ഞങ്ങളെ വിളിക്കുക — ഒരുമിച്ച് വിശദാംശങ്ങൾ ക്രമീകരിക്കാം.",
+    ecgIncludedLabel: "💓 ECG ഉൾപ്പെടുത്തിയിരിക്കുന്നു",
+    ecgAddonAvailableLabel: "💓 ECG ആഡ്-ഓൺ ലഭ്യം (+₹50)",
+    homePickupLabel: "🏠 {n} മാസം ഹോം പിക്കപ്പ്",
+    savePrefix: "₹{amount} ലാഭിക്കുക",
+    badgeMostBooked: "⭐ ഏറ്റവും കൂടുതൽ ബുക്ക് ചെയ്തത്",
+    badgeDoctorRec: "👨‍⚕️ ഡോക്ടർ ശുപാർശ",
+    badgePremium: "🏆 പ്രീമിയം",
     genderMap: {
       "പുരുഷൻ": "Male",
       "സ്ത്രീ": "Female",
       "മറ്റ്": "Other"
     }
   }
-};
-
-export const TEST_PRICES: Record<string, number> = {
-  "Basic Health Check": 499,
-  "Diabetes Profile": 799,
-  "Full Body Checkup": 1499,
-  "ബേസിക് ഹെൽത്ത് ചെക്ക്": 499,
-  "ഡയബറ്റീസ് പ്രൊഫൈൽ": 799,
-  "ഫുൾ ബോഡി ചെക്കപ്പ്": 1499,
-};
-
-export const PACKAGE_DESCRIPTIONS: Record<string, string> = {
-  "Basic Health Check": "CBC, Glucose Fasting, Cholesterol, Urine Routine",
-  "Diabetes Profile": "HbA1c, Glucose Fasting & PP, Lipid Profile",
-  "Full Body Checkup": "CBC, Liver Function, Kidney Function, Thyroid, Vitamin D, Lipid Profile, Glucose",
-  "ബേസിക് ഹെൽത്ത് ചെക്ക്": "സിബിസി, ഗ്ലൂക്കോസ് ഫാസ്റ്റിംഗ്, കൊളസ്ട്രോൾ, യൂറിൻ റുട്ടീൻ",
-  "ഡയബറ്റീസ് പ്രൊഫൈൽ": "HbA1c, ഗ്ലൂക്കോസ് ഫാസ്റ്റിംഗ് & പിപി, ലിപിഡ് പ്രൊഫൈൽ",
-  "ഫുൾ ബോഡി ചെക്കപ്പ്": "സിബിസി, ലിവർ ഫംഗ്ഷൻ, കിഡ്നി ഫംഗ്ഷൻ, തൈറോയ്ഡ്, വിറ്റാമിൻ ഡി, ലിപിഡ് പ്രൊഫൈൽ, ഗ്ലൂക്കോസ്",
 };

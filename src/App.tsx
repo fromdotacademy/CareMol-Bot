@@ -64,7 +64,18 @@ import {
   User as FirebaseUser
 } from 'firebase/auth';
 import { HARDCODED_ADMIN_EMAILS } from './lib/adminEmails';
-import { TRANSLATIONS, TEST_PRICES, PACKAGE_DESCRIPTIONS } from './constants';
+import {
+  TRANSLATIONS,
+  PACKAGES,
+  computeBookingPrice,
+  getPackageByName,
+  getPackagePrice,
+  isFamilyPlan,
+  eligibleForEcgAddon,
+  browserPackagesList,
+  cartPackagesList,
+  formatPackageDetail,
+} from './constants';
 import { Booking, BookingStatus, Language, ChatStep, PatientProfile, Staff, StaffRole, BookingConfig, PhlebAvailability, WeeklySchedule, SlotConfig } from './types';
 import { generateId, cn } from './lib/utils';
 import { format } from 'date-fns';
@@ -777,9 +788,12 @@ function DashboardView({ onError }: { onError: (err: Error) => void }) {
   };
 
   const saveTestsForBooking = async (b: Booking, tests: string[]) => {
-    const price = tests.reduce((sum, t) => sum + (TEST_PRICES[t] || 0), 0);
+    // If the new test list has no ECG-eligible package, clear any stale ecgAddon
+    // so the recomputed total doesn't include an orphan ₹50.
+    const ecgAddon = eligibleForEcgAddon(tests) ? (b.ecgAddon ?? false) : false;
+    const price = computeBookingPrice(tests, ecgAddon);
     try {
-      await updateDoc(doc(db, 'bookings', b.bookingId), { testNames: tests, price });
+      await updateDoc(doc(db, 'bookings', b.bookingId), { testNames: tests, price, ecgAddon });
     } catch (e) {
       try { handleFirestoreError(e, OperationType.UPDATE, `bookings/${b.bookingId}`); }
       catch (err: any) { onError(err); }
@@ -2271,11 +2285,13 @@ function PhlebotomistDashboard({ user, onError }: { user: FirebaseUser; onError:
   };
 
   const saveTests = async (b: Booking, newTests: string[]) => {
-    const newPrice = newTests.reduce((sum, t) => sum + (TEST_PRICES[t] || 0), 0);
+    const ecgAddon = eligibleForEcgAddon(newTests) ? (b.ecgAddon ?? false) : false;
+    const newPrice = computeBookingPrice(newTests, ecgAddon);
     try {
       await updateDoc(doc(db, 'bookings', b.bookingId), {
         testNames: newTests,
         price: newPrice,
+        ecgAddon,
       });
     } catch (e) {
       try { handleFirestoreError(e, OperationType.UPDATE, `bookings/${b.bookingId}`); }
@@ -2532,14 +2548,16 @@ function TestPickerModal({
   onSave: (tests: string[]) => void;
 }) {
   const [selected, setSelected] = useState<string[]>(booking.testNames || []);
-  // English catalog from TEST_PRICES (skip Malayalam duplicates)
-  const englishTests = Object.keys(TEST_PRICES).filter(n => /^[A-Za-z0-9 \-/]+$/.test(n));
+  // English bookable catalog — family plans excluded (phone-only, not bookable in app).
+  const englishTests = PACKAGES.filter(p => p.category !== 'family').map(p => p.name_en);
 
   const toggle = (name: string) => {
     setSelected(prev => prev.includes(name) ? prev.filter(n => n !== name) : [...prev, name]);
   };
 
-  const total = selected.reduce((sum, n) => sum + (TEST_PRICES[n] || 0), 0);
+  // Preserve existing ecgAddon for the total preview; cleared on save if not eligible.
+  const ecgAddon = eligibleForEcgAddon(selected) ? (booking.ecgAddon ?? false) : false;
+  const total = computeBookingPrice(selected, ecgAddon);
 
   return (
     <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4">
@@ -2567,10 +2585,10 @@ function TestPickerModal({
               >
                 <div>
                   <div className="font-bold text-sm text-text-dark">{name}</div>
-                  <div className="text-[10px] text-text-muted">{PACKAGE_DESCRIPTIONS[name] || ''}</div>
+                  <div className="text-[10px] text-text-muted">{getPackageByName(name)?.tests ?? ''}</div>
                 </div>
                 <div className="flex items-center gap-3">
-                  <span className="text-sm font-black text-text-dark">₹{TEST_PRICES[name] || 0}</span>
+                  <span className="text-sm font-black text-text-dark">₹{getPackagePrice(name)}</span>
                   {isOn ? <CheckCircle2 className="w-5 h-5 text-primary" /> : <Plus className="w-5 h-5 text-text-muted" />}
                 </div>
               </button>
@@ -2817,8 +2835,35 @@ function WhatsAppSimulator({ userId }: { userId: string }) {
     setStep('TEST_SELECTION');
     const currentTests = bookingData.testNames || [];
     const msg = customMsg || (currentTests.length > 0 ? t.anyAdditionalTests : t.askTest);
-    const remainingOptions = t.packagesList.filter(pkg => !currentTests.includes(pkg));
+    const cart = cartPackagesList(language || 'en');
+    const remainingOptions = cart.filter(pkg => !currentTests.includes(pkg));
     addBotMessage(msg, [...remainingOptions, t.doneSelecting, t.cancelBooking], false);
+  };
+
+  // Mirrors routeAfterTestsKnown() in botLogic.ts. Decides whether to ask the
+  // ECG add-on question or proceed to address/gender. Takes the prospective
+  // bookingData (caller's snapshot) since React state updates are async.
+  const routeAfterTestsKnownWeb = (current: Partial<Booking>) => {
+    const testNames = current.testNames || [];
+    if (current.ecgAddon === undefined && eligibleForEcgAddon(testNames)) {
+      setStep('ECG_ADDON');
+      addBotMessage(t.ecgAddonAsk, [t.ecgAddonYes, t.ecgAddonNo]);
+      return;
+    }
+    const lockedEcg = current.ecgAddon ?? false;
+    const newPrice = computeBookingPrice(testNames, lockedEcg);
+    setBookingData(prev => ({ ...prev, ecgAddon: lockedEcg, price: newPrice }));
+
+    if (current.patientAddress) {
+      setStep('PATIENT_ADDRESS_CONFIRM');
+      addBotMessage(t.confirmAddressPrompt.replace('{address}', current.patientAddress), [t.yesCorrect, t.noChange]);
+    } else if (current.patientGender) {
+      setStep('PATIENT_ADDRESS');
+      addBotMessage(t.patientAddress, [t.backToMainMenu], true);
+    } else {
+      setStep('PATIENT_GENDER');
+      addBotMessage(t.patientGender, [...t.genderOptions, t.backToMainMenu]);
+    }
   };
 
   const addUserMessage = (text: string) => {
@@ -2877,7 +2922,7 @@ function WhatsAppSimulator({ userId }: { userId: string }) {
 
       if (value === t.options.packages) {
         setStep('PACKAGE_VIEW');
-        addBotMessage(t.selectPackageToView, [...t.packagesList, t.backToMainMenu]);
+        addBotMessage(t.selectPackageToView, [...browserPackagesList(language || 'en'), t.backToMainMenu]);
         return;
       }
 
@@ -2924,7 +2969,7 @@ function WhatsAppSimulator({ userId }: { userId: string }) {
 
     // Guard: Prevent stale buttons from being taken as free-text input
     const systemOptionButtons = Object.values(t.options);
-    const staleButtons = [...systemOptionButtons, ...t.packagesList, ...t.slots, t.changeLanguage, t.doneSelecting];
+    const staleButtons = [...systemOptionButtons, ...browserPackagesList(language || 'en'), ...t.slots, t.changeLanguage, t.doneSelecting];
     const freeTextSteps: ChatStep[] = ['PATIENT_DETAILS_ENTRY', 'PATIENT_ADDRESS', 'AVAILABILITY_CHECK'];
 
     if (freeTextSteps.includes(step) && staleButtons.includes(value)) {
@@ -2979,7 +3024,7 @@ function WhatsAppSimulator({ userId }: { userId: string }) {
             }
           } else if (value === t.options.packages) {
             setStep('PACKAGE_VIEW');
-            addBotMessage(t.selectPackageToView, [...t.packagesList, t.backToMainMenu]);
+            addBotMessage(t.selectPackageToView, [...browserPackagesList(language || 'en'), t.backToMainMenu]);
           } else if (value === t.options.medicine) {
             setStep('MEDICINE_DELIVERY');
             addBotMessage(t.medicineComingSoon, [t.backToMainMenu, t.options.support]);
@@ -3002,24 +3047,42 @@ function WhatsAppSimulator({ userId }: { userId: string }) {
           }
           break;
 
-        case 'PACKAGE_VIEW':
-          if (t.packagesList.includes(value)) {
-            const desc = PACKAGE_DESCRIPTIONS[value] || "";
-            setBookingData(prev => ({ 
-              ...prev, 
-              testNames: [value], 
-              price: TEST_PRICES[value] || 0 
-            }));
-            setStep('PACKAGE_DETAIL_VIEW');
-            addBotMessage(
-              `**${value}**\n\n${t.packageIncludes.replace('{details}', desc)}\n\nPrice: ₹${TEST_PRICES[value]}`,
-              [t.bookNow, t.backToPackages, t.backToMainMenu]
-            );
-          } else {
+        case 'PACKAGE_VIEW': {
+          const lang = language || 'en';
+          if (value === t.backToPackages) {
+            addBotMessage(t.selectPackageToView, [...browserPackagesList(lang), t.backToMainMenu]);
+            break;
+          }
+          const browserList = browserPackagesList(lang);
+          if (!browserList.includes(value)) {
             setStep('MAIN_MENU');
             addBotMessage(t.menuHeader, Object.values(t.options));
+            break;
           }
+          if (isFamilyPlan(value)) {
+            addBotMessage(
+              t.familyPlanCallPrompt.replace('{plan}', value),
+              [t.options.call, t.backToPackages, t.backToMainMenu]
+            );
+            break;
+          }
+          const pkg = getPackageByName(value, lang);
+          if (!pkg) {
+            setStep('MAIN_MENU');
+            addBotMessage(t.menuHeader, Object.values(t.options));
+            break;
+          }
+          setBookingData(prev => {
+            const { ecgAddon: _drop, ...rest } = prev;
+            return { ...rest, testNames: [value], price: pkg.price };
+          });
+          setStep('PACKAGE_DETAIL_VIEW');
+          addBotMessage(
+            formatPackageDetail(pkg, lang),
+            [t.bookNow, t.backToPackages, t.backToMainMenu]
+          );
           break;
+        }
 
         case 'PACKAGE_DETAIL_VIEW':
           if (value === t.bookNow) {
@@ -3033,7 +3096,7 @@ function WhatsAppSimulator({ userId }: { userId: string }) {
             }
           } else if (value === t.backToPackages) {
             setStep('PACKAGE_VIEW');
-            addBotMessage(t.selectPackageToView, [...t.packagesList, t.backToMainMenu]);
+            addBotMessage(t.selectPackageToView, [...browserPackagesList(language || 'en'), t.backToMainMenu]);
           } else {
             setStep('MAIN_MENU');
             addBotMessage(t.menuHeader, Object.values(t.options));
@@ -3072,6 +3135,15 @@ function WhatsAppSimulator({ userId }: { userId: string }) {
         case 'PATIENT_SELECTION':
           const selectedPatient = patients.find(p => p.name === value);
           if (selectedPatient) {
+            const merged: Partial<Booking> = {
+              ...bookingData,
+              patientId: selectedPatient.id,
+              patientName: selectedPatient.name,
+              patientAge: selectedPatient.age,
+              patientGender: selectedPatient.gender,
+              patientPhone: selectedPatient.phone,
+              patientAddress: selectedPatient.address || ''
+            };
             setBookingData(prev => ({
               ...prev,
               patientId: selectedPatient.id,
@@ -3083,16 +3155,7 @@ function WhatsAppSimulator({ userId }: { userId: string }) {
             }));
             // Existing patient — skip location check; address is reconfirmed at the end.
             if (bookingData.testNames && bookingData.testNames.length > 0) {
-              if (selectedPatient.address) {
-                setStep('PATIENT_ADDRESS_CONFIRM');
-                addBotMessage(t.confirmAddressPrompt.replace('{address}', selectedPatient.address), [t.yesCorrect, t.noChange]);
-              } else if (selectedPatient.gender) {
-                setStep('PATIENT_ADDRESS');
-                addBotMessage(t.patientAddress, [t.backToMainMenu], true);
-              } else {
-                setStep('PATIENT_GENDER');
-                addBotMessage(t.patientGender, [...t.genderOptions, t.backToMainMenu]);
-              }
+              routeAfterTestsKnownWeb(merged);
             } else {
               promptTestSelection();
             }
@@ -3132,18 +3195,9 @@ function WhatsAppSimulator({ userId }: { userId: string }) {
               } else {
                 // Avoid duplicate selection if tests already selected via Package View
                 if (bookingData.testNames && bookingData.testNames.length > 0) {
-                   if (bookingData.patientAddress) {
-                     setStep('PATIENT_ADDRESS_CONFIRM');
-                     addBotMessage(t.confirmAddressPrompt.replace('{address}', bookingData.patientAddress), [t.yesCorrect, t.noChange]);
-                   } else if (bookingData.patientGender) {
-                     setStep('PATIENT_ADDRESS');
-                     addBotMessage(t.patientAddress, [t.backToMainMenu], true);
-                   } else {
-                     setStep('PATIENT_GENDER');
-                     addBotMessage(t.patientGender, [...t.genderOptions, t.backToMainMenu]);
-                   }
+                  routeAfterTestsKnownWeb(bookingData);
                 } else {
-                   promptTestSelection();
+                  promptTestSelection();
                 }
               }
             }, 800);
@@ -3153,48 +3207,50 @@ function WhatsAppSimulator({ userId }: { userId: string }) {
           }
           break;
 
-        case 'TEST_SELECTION':
+        case 'TEST_SELECTION': {
+          const lang = language || 'en';
+          const cart = cartPackagesList(lang);
           const currentTests = bookingData.testNames || [];
-          
+
           if (value === t.doneSelecting) {
             if (currentTests.length === 0) {
-              addBotMessage(t.selectAtLeastOneTest, [...t.packagesList, t.cancelBooking]);
+              addBotMessage(t.selectAtLeastOneTest, [...cart, t.cancelBooking]);
               return;
             }
-            if (bookingData.patientAddress) {
-                setStep('PATIENT_ADDRESS_CONFIRM');
-                addBotMessage(t.confirmAddressPrompt.replace('{address}', bookingData.patientAddress), [t.yesCorrect, t.noChange]);
-            } else if (bookingData.patientGender) {
-                setStep('PATIENT_ADDRESS');
-                addBotMessage(t.patientAddress, [t.backToMainMenu], true);
-            } else {
-                setStep('PATIENT_GENDER');
-                addBotMessage(t.patientGender, [...t.genderOptions, t.backToMainMenu]);
-            }
-          } else if (t.packagesList.includes(value)) {
-            const newTests = currentTests.includes(value) 
-              ? currentTests.filter(t => t !== value)
+            routeAfterTestsKnownWeb(bookingData);
+          } else if (cart.includes(value)) {
+            const newTests = currentTests.includes(value)
+              ? currentTests.filter(n => n !== value)
               : [...currentTests, value];
-            
-            const newPrice = newTests.reduce((sum, test) => sum + (TEST_PRICES[test] || 0), 0);
-            
-            setBookingData(prev => ({ 
-              ...prev, 
-              testNames: newTests, 
-              price: newPrice 
-            }));
+            const newPrice = computeBookingPrice(newTests, false);
+            setBookingData(prev => {
+              const { ecgAddon: _drop, ...rest } = prev;
+              return { ...rest, testNames: newTests, price: newPrice };
+            });
 
-            const statusMsg = newTests.length > 0 
+            const statusMsg = newTests.length > 0
               ? `${t.selectedTestsPrefix}: ${newTests.join(', ')}\nTotal: ₹${newPrice}\n\n${t.anyAdditionalTests}`
               : t.askTest;
-
-            const remainingOptions = t.packagesList.filter(pkg => !newTests.includes(pkg));
+            const remainingOptions = cart.filter(pkg => !newTests.includes(pkg));
             addBotMessage(statusMsg, [...remainingOptions, t.doneSelecting, t.cancelBooking], false);
           } else {
-            // Re-prompt specifically if they try to type something unknown
             promptTestSelection();
           }
           break;
+        }
+
+        case 'ECG_ADDON': {
+          let ecg: boolean | undefined;
+          if (value === t.ecgAddonYes) ecg = true;
+          else if (value === t.ecgAddonNo) ecg = false;
+          if (ecg === undefined) {
+            addBotMessage(t.ecgAddonAsk, [t.ecgAddonYes, t.ecgAddonNo]);
+            break;
+          }
+          setBookingData(prev => ({ ...prev, ecgAddon: ecg }));
+          routeAfterTestsKnownWeb({ ...bookingData, ecgAddon: ecg });
+          break;
+        }
 
         case 'PATIENT_GENDER':
           const internalGender = t.genderMap[value] || 'Other';
@@ -3293,7 +3349,7 @@ function WhatsAppSimulator({ userId }: { userId: string }) {
           setBookingData(prev => ({ ...prev, notes: notesText }));
           setStep('CONFIRMATION');
           // Re-calculate price to ensure accuracy
-          const finalPrice = (bookingData.testNames || []).reduce((sum, test) => sum + (TEST_PRICES[test] || 0), 0);
+          const finalPrice = computeBookingPrice(bookingData.testNames || [], bookingData.ecgAddon || false);
 
           const sl = t.summaryLabels;
           const dateLabel = bookingData.bookingDate
@@ -3350,7 +3406,7 @@ function WhatsAppSimulator({ userId }: { userId: string }) {
             await upsertPatientWeb(userId, {}, bookingData.patientId);
 
             setStep('COMPLETED');
-            const receiptPrice = (bookingData.testNames || []).reduce((sum, test) => sum + (TEST_PRICES[test] || 0), 0);
+            const receiptPrice = computeBookingPrice(bookingData.testNames || [], bookingData.ecgAddon || false);
             const receipt =
               `*🧾 ${t.success}*\n\n` +
               `*${t.bookingId}:* ${finalId}\n` +

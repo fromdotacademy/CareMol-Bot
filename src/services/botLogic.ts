@@ -1,5 +1,14 @@
 import { adminDb } from './firebaseAdmin';
-import { TRANSLATIONS, TEST_PRICES, PACKAGE_DESCRIPTIONS } from '../constants';
+import {
+  TRANSLATIONS,
+  computeBookingPrice,
+  getPackageByName,
+  isFamilyPlan,
+  eligibleForEcgAddon,
+  browserPackagesList,
+  cartPackagesList,
+  formatPackageDetail,
+} from '../constants';
 import { geocodeLocation, isWithinRange } from './mapsService';
 import { generateId } from '../lib/utils';
 import { ChatStep, Language, Booking, BookingConfig, PatientProfile } from '../types';
@@ -72,6 +81,43 @@ async function upsertPatientProfile(
   return patientId;
 }
 
+// Shared post-tests router. Called after the user has picked one or more
+// packages — decides whether to ask the ECG add-on question or proceed to the
+// next missing patient field. Keeps the ECG step from being bypassed when a
+// returning patient comes through PATIENT_SELECTION or AVAILABILITY_CHECK
+// with tests already pre-loaded via PACKAGE_DETAIL_VIEW.
+function routeAfterTestsKnown(
+  session: BotSession,
+  addResponse: (text: string, buttons?: string[]) => void,
+  t: (typeof TRANSLATIONS)[Language]
+): void {
+  const testNames = session.bookingData.testNames || [];
+  if (session.bookingData.ecgAddon === undefined && eligibleForEcgAddon(testNames)) {
+    session.step = 'ECG_ADDON';
+    addResponse(t.ecgAddonAsk, [t.ecgAddonYes, t.ecgAddonNo]);
+    return;
+  }
+  // Lock ecgAddon (false if not eligible or skipped) and recompute total.
+  if (session.bookingData.ecgAddon === undefined) {
+    session.bookingData.ecgAddon = false;
+  }
+  session.bookingData.price = computeBookingPrice(testNames, session.bookingData.ecgAddon);
+
+  if (session.bookingData.patientAddress) {
+    session.step = 'PATIENT_ADDRESS_CONFIRM';
+    addResponse(
+      t.confirmAddressPrompt.replace('{address}', session.bookingData.patientAddress),
+      [t.yesCorrect, t.noChange]
+    );
+  } else if (session.bookingData.patientGender) {
+    session.step = 'PATIENT_ADDRESS';
+    addResponse(t.patientAddress, [t.backToMainMenu]);
+  } else {
+    session.step = 'PATIENT_GENDER';
+    addResponse(t.patientGender, [...t.genderOptions, t.backToMainMenu]);
+  }
+}
+
 export async function handleWhatsAppMessage(from: string, incomingBody: string): Promise<BotResponse[]> {
   const sessionRef = adminDb.collection('whatsapp_sessions').doc(from);
   const sessionDoc = await sessionRef.get();
@@ -125,7 +171,7 @@ export async function handleWhatsAppMessage(from: string, incomingBody: string):
       }
     } else if (value === t.options.packages) {
       session.step = 'PACKAGE_VIEW';
-      addResponse(t.selectPackageToView, [...t.packagesList, t.backToMainMenu]);
+      addResponse(t.selectPackageToView, [...browserPackagesList(session.language || 'en'), t.backToMainMenu]);
     } else if (value === t.options.medicine) {
       session.step = 'MEDICINE_DELIVERY';
       addResponse(t.medicineComingSoon, [t.backToMainMenu, t.options.support]);
@@ -210,7 +256,7 @@ export async function handleWhatsAppMessage(from: string, incomingBody: string):
         }
       } else if (value === t.options.packages) {
         session.step = 'PACKAGE_VIEW';
-        addResponse(t.selectPackageToView, [...t.packagesList, t.backToMainMenu]);
+        addResponse(t.selectPackageToView, [...browserPackagesList(session.language || 'en'), t.backToMainMenu]);
       } else if (value === t.options.medicine) {
         session.step = 'MEDICINE_DELIVERY';
         addResponse(t.medicineComingSoon, [t.backToMainMenu, t.options.support]);
@@ -268,24 +314,46 @@ export async function handleWhatsAppMessage(from: string, incomingBody: string):
       }
       break;
 
-    case 'PACKAGE_VIEW':
-      if (t.packagesList.includes(value)) {
-        const desc = PACKAGE_DESCRIPTIONS[value] || "";
-        session.bookingData = { 
-          ...session.bookingData,
-          testNames: [value], 
-          price: TEST_PRICES[value] || 0 
-        };
-        session.step = 'PACKAGE_DETAIL_VIEW';
-        addResponse(
-          `*${value}*\n\n${t.packageIncludes.replace('{details}', desc)}\n\nPrice: ₹${TEST_PRICES[value]}`,
-          [t.bookNow, t.backToPackages, t.backToMainMenu]
-        );
-      } else {
+    case 'PACKAGE_VIEW': {
+      const lang = session.language || 'en';
+      if (value === t.backToPackages) {
+        addResponse(t.selectPackageToView, [...browserPackagesList(lang), t.backToMainMenu]);
+        break;
+      }
+      const browserList = browserPackagesList(lang);
+      if (!browserList.includes(value)) {
         session.step = 'MAIN_MENU';
         addResponse(t.menuHeader, Object.values(t.options));
+        break;
       }
+      if (isFamilyPlan(value)) {
+        // Family plans are info-only — route customer to call CareMol.
+        addResponse(
+          t.familyPlanCallPrompt.replace('{plan}', value),
+          [t.options.call, t.backToPackages, t.backToMainMenu]
+        );
+        // Stay in PACKAGE_VIEW so the local backToPackages handler above works.
+        break;
+      }
+      const pkg = getPackageByName(value, lang);
+      if (!pkg) {
+        session.step = 'MAIN_MENU';
+        addResponse(t.menuHeader, Object.values(t.options));
+        break;
+      }
+      session.bookingData = {
+        ...session.bookingData,
+        testNames: [value],
+        price: pkg.price,
+      };
+      delete session.bookingData.ecgAddon; // re-prompt at routeAfterTestsKnown
+      session.step = 'PACKAGE_DETAIL_VIEW';
+      addResponse(
+        formatPackageDetail(pkg, lang),
+        [t.bookNow, t.backToPackages, t.backToMainMenu]
+      );
       break;
+    }
 
     case 'PACKAGE_DETAIL_VIEW':
       if (value === t.bookNow) {
@@ -302,7 +370,7 @@ export async function handleWhatsAppMessage(from: string, incomingBody: string):
         }
       } else if (value === t.backToPackages) {
         session.step = 'PACKAGE_VIEW';
-        addResponse(t.selectPackageToView, [...t.packagesList, t.backToMainMenu]);
+        addResponse(t.selectPackageToView, [...browserPackagesList(session.language || 'en'), t.backToMainMenu]);
       } else {
         session.step = 'MAIN_MENU';
         addResponse(t.menuHeader, Object.values(t.options));
@@ -329,19 +397,10 @@ export async function handleWhatsAppMessage(from: string, incomingBody: string):
           };
           // Existing patient — skip location check; address is reconfirmed at the end.
           if (session.bookingData.testNames && session.bookingData.testNames.length > 0) {
-            if (session.bookingData.patientAddress) {
-              session.step = 'PATIENT_ADDRESS_CONFIRM';
-              addResponse(t.confirmAddressPrompt.replace('{address}', session.bookingData.patientAddress), [t.yesCorrect, t.noChange]);
-            } else if (session.bookingData.patientGender) {
-              session.step = 'PATIENT_ADDRESS';
-              addResponse(t.patientAddress, [t.backToMainMenu]);
-            } else {
-              session.step = 'PATIENT_GENDER';
-              addResponse(t.patientGender, [...t.genderOptions, t.backToMainMenu]);
-            }
+            routeAfterTestsKnown(session, addResponse, t);
           } else {
             session.step = 'TEST_SELECTION';
-            addResponse(t.askTest, [...t.packagesList, t.cancelBooking]);
+            addResponse(t.askTest, [...cartPackagesList(session.language || 'en'), t.cancelBooking]);
           }
         } else {
           session.step = 'PATIENT_DETAILS_ENTRY';
@@ -363,21 +422,12 @@ export async function handleWhatsAppMessage(from: string, incomingBody: string):
         if (session.isOnlyChecking) {
           addResponse(t.interestedInBooking, [t.options.book, t.backToMainMenu]);
         } else {
-          session.step = 'TEST_SELECTION';
           // Avoid duplicate selection if tests already selected via Package View
           if (session.bookingData.testNames && session.bookingData.testNames.length > 0) {
-            if (session.bookingData.patientAddress) {
-              session.step = 'PATIENT_ADDRESS_CONFIRM';
-              addResponse(t.confirmAddressPrompt.replace('{address}', session.bookingData.patientAddress), [t.yesCorrect, t.noChange]);
-            } else if (session.bookingData.patientGender) {
-              session.step = 'PATIENT_ADDRESS';
-              addResponse(t.patientAddress, [t.backToMainMenu]);
-            } else {
-              session.step = 'PATIENT_GENDER';
-              addResponse(t.patientGender, [...t.genderOptions, t.backToMainMenu]);
-            }
+            routeAfterTestsKnown(session, addResponse, t);
           } else {
-            addResponse(t.askTest, [...t.packagesList, t.cancelBooking]);
+            session.step = 'TEST_SELECTION';
+            addResponse(t.askTest, [...cartPackagesList(session.language || 'en'), t.cancelBooking]);
           }
         }
       } else {
@@ -386,38 +436,45 @@ export async function handleWhatsAppMessage(from: string, incomingBody: string):
       }
       break;
 
-    case 'TEST_SELECTION':
+    case 'TEST_SELECTION': {
+      const lang = session.language || 'en';
+      const cart = cartPackagesList(lang);
       const currentTests = session.bookingData.testNames || [];
       if (value === t.doneSelecting) {
         if (currentTests.length === 0) {
-          addResponse(t.selectAtLeastOneTest, [...t.packagesList, t.cancelBooking]);
+          addResponse(t.selectAtLeastOneTest, [...cart, t.cancelBooking]);
         } else {
-          if (session.bookingData.patientAddress) {
-            session.step = 'PATIENT_ADDRESS_CONFIRM';
-            addResponse(t.confirmAddressPrompt.replace('{address}', session.bookingData.patientAddress), [t.yesCorrect, t.noChange]);
-          } else if (session.bookingData.patientGender) {
-            session.step = 'PATIENT_ADDRESS';
-            addResponse(t.patientAddress, [t.backToMainMenu]);
-          } else {
-            session.step = 'PATIENT_GENDER';
-            addResponse(t.patientGender, [...t.genderOptions, t.backToMainMenu]);
-          }
+          routeAfterTestsKnown(session, addResponse, t);
         }
-      } else if (t.packagesList.includes(value)) {
-        const newTests = currentTests.includes(value) 
+      } else if (cart.includes(value)) {
+        const newTests = currentTests.includes(value)
           ? currentTests.filter(v => v !== value)
           : [...currentTests, value];
-        const newPrice = newTests.reduce((sum, test) => sum + (TEST_PRICES[test] || 0), 0);
         session.bookingData.testNames = newTests;
+        // Reset ecgAddon when cart changes so eligibility re-evaluates at Done.
+        delete session.bookingData.ecgAddon;
+        const newPrice = computeBookingPrice(newTests, false);
         session.bookingData.price = newPrice;
-        
-        const statusMsg = newTests.length > 0 
+
+        const statusMsg = newTests.length > 0
           ? `${t.selectedTestsPrefix}: ${newTests.join(', ')}\nTotal: ₹${newPrice}\n\n${t.anyAdditionalTests}`
           : t.askTest;
-        const remaining = t.packagesList.filter(p => !newTests.includes(p));
-        // Point 6: ✅ Done option
+        const remaining = cart.filter(p => !newTests.includes(p));
         addResponse(statusMsg, [...remaining, t.doneSelecting, t.cancelBooking]);
       }
+      break;
+    }
+
+    case 'ECG_ADDON':
+      if (value === t.ecgAddonYes) {
+        session.bookingData.ecgAddon = true;
+      } else if (value === t.ecgAddonNo) {
+        session.bookingData.ecgAddon = false;
+      } else {
+        addResponse(t.ecgAddonAsk, [t.ecgAddonYes, t.ecgAddonNo]);
+        break;
+      }
+      routeAfterTestsKnown(session, addResponse, t);
       break;
 
     case 'PATIENT_GENDER':
@@ -500,7 +557,7 @@ export async function handleWhatsAppMessage(from: string, incomingBody: string):
       const notesText = (value === t.none || value.toLowerCase() === 'none') ? '' : value;
       session.bookingData.notes = notesText;
       session.step = 'CONFIRMATION';
-      const fPrice = (session.bookingData.testNames || []).reduce((sum, test) => sum + (TEST_PRICES[test] || 0), 0);
+      const fPrice = computeBookingPrice(session.bookingData.testNames || [], session.bookingData.ecgAddon || false);
       const sl = t.summaryLabels;
       const confirmDateLabel = session.bookingData.bookingDate
         ? formatDateLabel(session.bookingData.bookingDate, session.language || 'en')
@@ -556,7 +613,7 @@ export async function handleWhatsAppMessage(from: string, incomingBody: string):
         await upsertPatientProfile(from, {}, session.bookingData.patientId);
 
         session.step = 'COMPLETED';
-        const receiptPrice = (session.bookingData.testNames || []).reduce((sum, test) => sum + (TEST_PRICES[test] || 0), 0);
+        const receiptPrice = computeBookingPrice(session.bookingData.testNames || [], session.bookingData.ecgAddon || false);
         const receipt =
           `*🧾 ${t.success}*\n\n` +
           `*${t.bookingId}:* ${bId}\n` +

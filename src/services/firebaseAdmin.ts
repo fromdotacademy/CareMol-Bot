@@ -49,4 +49,4 @@ if (!admin.apps.length) {
 }
 
 export const adminDb = getFirestore(app, firebaseConfig.firestoreDatabaseId || '(default)');
-export default admin;
+export { admin };

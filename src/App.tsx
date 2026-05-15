@@ -53,13 +53,17 @@ import {
   getDocFromServer,
   deleteDoc
 } from 'firebase/firestore';
-import { 
-  onAuthStateChanged, 
-  signInWithPopup, 
+import {
+  onAuthStateChanged,
+  signInWithPopup,
   GoogleAuthProvider,
+  signInWithEmailAndPassword,
+  sendPasswordResetEmail,
+  updatePassword,
   signOut,
   User as FirebaseUser
 } from 'firebase/auth';
+import { HARDCODED_ADMIN_EMAILS } from './lib/adminEmails';
 import { TRANSLATIONS, TEST_PRICES, PACKAGE_DESCRIPTIONS } from './constants';
 import { Booking, BookingStatus, Language, ChatStep, PatientProfile, Staff, StaffRole, BookingConfig, PhlebAvailability, WeeklySchedule, SlotConfig } from './types';
 import { generateId, cn } from './lib/utils';
@@ -84,10 +88,7 @@ import {
 //      access cannot be lost if the staff collection is wiped.
 //   2. staff/{uid} record with role + active flag.
 //   3. Otherwise: customer (sees the WhatsApp simulator only).
-const HARDCODED_ADMIN_EMAILS = new Set([
-  'tubejaf@gmail.com',
-  'fromdotacademy@gmail.com',
-]);
+// HARDCODED_ADMIN_EMAILS now lives in ./lib/adminEmails so the server can share it.
 
 type ResolvedRole = StaffRole | 'customer';
 
@@ -292,12 +293,51 @@ export default function App() {
   }, []);
 
   const [loginError, setLoginError] = React.useState<string | null>(null);
+  const [loginInfo, setLoginInfo] = React.useState<string | null>(null);
+  const [emailInput, setEmailInput] = React.useState('');
+  const [passwordInput, setPasswordInput] = React.useState('');
+  const [emailLoginBusy, setEmailLoginBusy] = React.useState(false);
 
   const loginWithGoogle = async () => {
     setLoginError(null);
+    setLoginInfo(null);
     try {
       const provider = new GoogleAuthProvider();
       await signInWithPopup(auth, provider);
+    } catch (e: any) {
+      console.error(e);
+      setLoginError(e?.message || String(e));
+    }
+  };
+
+  const loginWithEmail = async () => {
+    setLoginError(null);
+    setLoginInfo(null);
+    if (!emailInput.trim() || !passwordInput) {
+      setLoginError('Enter your email and password.');
+      return;
+    }
+    setEmailLoginBusy(true);
+    try {
+      await signInWithEmailAndPassword(auth, emailInput.trim(), passwordInput);
+    } catch (e: any) {
+      console.error(e);
+      setLoginError(e?.message || String(e));
+    } finally {
+      setEmailLoginBusy(false);
+    }
+  };
+
+  const handleForgotPassword = async () => {
+    setLoginError(null);
+    setLoginInfo(null);
+    if (!emailInput.trim()) {
+      setLoginError('Enter your email first, then click "Forgot password?".');
+      return;
+    }
+    try {
+      await sendPasswordResetEmail(auth, emailInput.trim());
+      setLoginInfo('Password reset email sent. Check your inbox.');
     } catch (e: any) {
       console.error(e);
       setLoginError(e?.message || String(e));
@@ -309,6 +349,56 @@ export default function App() {
       await signOut(auth);
     } catch (e) {
       console.error(e);
+    }
+  };
+
+  const [showChangePassword, setShowChangePassword] = React.useState(false);
+  const [newPassword, setNewPassword] = React.useState('');
+  const [confirmPassword, setConfirmPassword] = React.useState('');
+  const [pwBusy, setPwBusy] = React.useState(false);
+  const [pwError, setPwError] = React.useState<string | null>(null);
+  const [pwSuccess, setPwSuccess] = React.useState<string | null>(null);
+
+  const isPasswordUser = !!user?.providerData?.some(p => p.providerId === 'password');
+
+  const submitChangePassword = async () => {
+    setPwError(null);
+    setPwSuccess(null);
+    if (newPassword.length < 6) {
+      setPwError('Password must be at least 6 characters.');
+      return;
+    }
+    if (newPassword !== confirmPassword) {
+      setPwError('Passwords do not match.');
+      return;
+    }
+    if (!auth.currentUser) {
+      setPwError('Not signed in.');
+      return;
+    }
+    setPwBusy(true);
+    try {
+      await updatePassword(auth.currentUser, newPassword);
+      setPwSuccess('Password updated.');
+      setNewPassword('');
+      setConfirmPassword('');
+      setTimeout(() => {
+        setShowChangePassword(false);
+        setPwSuccess(null);
+      }, 1500);
+    } catch (e: any) {
+      if (e?.code === 'auth/requires-recent-login' && auth.currentUser?.email) {
+        try {
+          await sendPasswordResetEmail(auth, auth.currentUser.email);
+          setPwError('For security, please sign in again. A reset link has been sent to your email.');
+        } catch (e2: any) {
+          setPwError(e?.message || String(e));
+        }
+      } else {
+        setPwError(e?.message || String(e));
+      }
+    } finally {
+      setPwBusy(false);
     }
   };
 
@@ -335,14 +425,61 @@ export default function App() {
               <LogIn className="w-10 h-10" />
             </div>
             <h2 className="text-3xl font-black text-text-dark mb-4 tracking-tight">Access Secure Dashboard</h2>
-            <p className="text-text-muted mb-10 max-w-md text-lg">Experience real-time sample collection management and chatbot simulation.</p>
-            <button 
+            <p className="text-text-muted mb-8 max-w-md text-lg">Experience real-time sample collection management and chatbot simulation.</p>
+
+            <button
               onClick={loginWithGoogle}
-              className="bg-primary text-white px-10 py-5 rounded-2xl font-bold flex items-center gap-4 hover:opacity-90 transition-opacity shadow-2xl shadow-primary/30"
+              className="bg-primary text-white px-10 py-4 rounded-2xl font-bold flex items-center gap-4 hover:opacity-90 transition-opacity shadow-2xl shadow-primary/30"
             >
               <img src="https://www.gstatic.com/firebasejs/ui/2.0.0/images/auth/google.svg" className="w-6 h-6 bg-white p-0.5 rounded" alt="Google" />
               Sign in with Google
             </button>
+            <p className="mt-2 text-[10px] uppercase tracking-widest font-bold text-text-muted">For admins</p>
+
+            <div className="flex items-center w-full max-w-sm my-6">
+              <div className="flex-1 h-px bg-border-subtle" />
+              <span className="px-3 text-xs text-text-muted uppercase tracking-widest">or</span>
+              <div className="flex-1 h-px bg-border-subtle" />
+            </div>
+
+            <div className="w-full max-w-sm space-y-2 text-left">
+              <p className="text-[10px] uppercase tracking-widest font-bold text-text-muted text-center mb-1">For staff</p>
+              <input
+                type="email"
+                placeholder="Email"
+                value={emailInput}
+                onChange={(e) => setEmailInput(e.target.value)}
+                className="w-full px-4 py-3 border border-border-subtle rounded-xl text-sm outline-none focus:border-primary"
+                autoComplete="username"
+              />
+              <input
+                type="password"
+                placeholder="Password"
+                value={passwordInput}
+                onChange={(e) => setPasswordInput(e.target.value)}
+                onKeyDown={(e) => { if (e.key === 'Enter') loginWithEmail(); }}
+                className="w-full px-4 py-3 border border-border-subtle rounded-xl text-sm outline-none focus:border-primary"
+                autoComplete="current-password"
+              />
+              <button
+                onClick={loginWithEmail}
+                disabled={emailLoginBusy}
+                className="w-full bg-slate-800 text-white px-6 py-3 rounded-xl font-bold hover:opacity-90 transition-opacity disabled:opacity-50"
+              >
+                {emailLoginBusy ? 'Signing in…' : 'Sign In'}
+              </button>
+              <button
+                onClick={handleForgotPassword}
+                type="button"
+                className="w-full text-xs text-primary underline pt-1"
+              >
+                Forgot password?
+              </button>
+            </div>
+
+            {loginInfo && (
+              <p className="mt-4 text-green-700 text-sm bg-green-50 border border-green-200 rounded-xl px-4 py-3 max-w-md text-left break-all">{loginInfo}</p>
+            )}
             {loginError && (
               <p className="mt-4 text-red-600 text-sm bg-red-50 border border-red-200 rounded-xl px-4 py-3 max-w-md text-left break-all">{loginError}</p>
             )}
@@ -375,6 +512,15 @@ export default function App() {
                     <div className="w-10 h-10 rounded-full bg-slate-100 flex items-center justify-center border border-border-subtle overflow-hidden">
                       {user.photoURL ? <img src={user.photoURL} alt="" referrerPolicy="no-referrer" /> : <User className="w-5 h-5 text-primary" />}
                     </div>
+                    {isPasswordUser && (
+                      <button
+                        onClick={() => { setShowChangePassword(true); setPwError(null); setPwSuccess(null); }}
+                        className="text-text-muted hover:text-primary transition-colors text-[10px] font-bold uppercase tracking-widest"
+                        title="Change password"
+                      >
+                        Change PW
+                      </button>
+                    )}
                     <button onClick={logout} className="text-text-muted hover:text-red-500 transition-colors">
                       <LogOut className="w-4 h-4" />
                     </button>
@@ -458,6 +604,64 @@ export default function App() {
           </>
         )}
       </div>
+
+      {showChangePassword && (
+        <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4">
+          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-md p-6 space-y-4">
+            <div className="flex items-center justify-between">
+              <h3 className="text-lg font-bold text-text-dark">Change Password</h3>
+              <button
+                onClick={() => { setShowChangePassword(false); setNewPassword(''); setConfirmPassword(''); setPwError(null); setPwSuccess(null); }}
+                className="text-text-muted hover:text-text-dark"
+                aria-label="Close"
+              >
+                ✕
+              </button>
+            </div>
+            <p className="text-xs text-text-muted">
+              Choose a new password (at least 6 characters). You may be asked to sign in again for security.
+            </p>
+            <input
+              type="password"
+              placeholder="New password"
+              value={newPassword}
+              onChange={(e) => setNewPassword(e.target.value)}
+              className="w-full px-4 py-3 border border-border-subtle rounded-xl text-sm outline-none focus:border-primary"
+              autoComplete="new-password"
+            />
+            <input
+              type="password"
+              placeholder="Confirm new password"
+              value={confirmPassword}
+              onChange={(e) => setConfirmPassword(e.target.value)}
+              onKeyDown={(e) => { if (e.key === 'Enter') submitChangePassword(); }}
+              className="w-full px-4 py-3 border border-border-subtle rounded-xl text-sm outline-none focus:border-primary"
+              autoComplete="new-password"
+            />
+            {pwError && (
+              <p className="text-red-600 text-sm bg-red-50 border border-red-200 rounded-xl px-3 py-2 break-all">{pwError}</p>
+            )}
+            {pwSuccess && (
+              <p className="text-green-700 text-sm bg-green-50 border border-green-200 rounded-xl px-3 py-2 break-all">{pwSuccess}</p>
+            )}
+            <div className="flex justify-end gap-2">
+              <button
+                onClick={() => { setShowChangePassword(false); setNewPassword(''); setConfirmPassword(''); setPwError(null); setPwSuccess(null); }}
+                className="px-4 py-2 text-text-muted text-sm font-bold hover:text-text-dark"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={submitChangePassword}
+                disabled={pwBusy}
+                className="px-4 py-2 bg-primary text-white text-sm font-bold rounded-xl hover:opacity-90 disabled:opacity-50"
+              >
+                {pwBusy ? 'Updating…' : 'Update Password'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
@@ -1174,46 +1378,54 @@ function emptyWeeklySchedule(): WeeklySchedule {
 function StaffView({ staff, config, onError }: { staff: Staff[]; config: BookingConfig; onError: (err: Error) => void }) {
   const [showForm, setShowForm] = useState(false);
   const [form, setForm] = useState<{
-    uid: string;
     name: string;
     email: string;
     phone: string;
     role: StaffRole;
     defaultSchedule: WeeklySchedule;
-  }>({ uid: '', name: '', email: '', phone: '', role: 'phlebotomist', defaultSchedule: defaultWeeklySchedule(config.slots) });
+  }>({ name: '', email: '', phone: '', role: 'phlebotomist', defaultSchedule: defaultWeeklySchedule(config.slots) });
   const [saving, setSaving] = useState(false);
   const [editingScheduleUid, setEditingScheduleUid] = useState<string | null>(null);
   const [editingScheduleDraft, setEditingScheduleDraft] = useState<WeeklySchedule>(emptyWeeklySchedule());
   const [savingSchedule, setSavingSchedule] = useState(false);
 
   const reset = () => setForm({
-    uid: '', name: '', email: '', phone: '', role: 'phlebotomist',
+    name: '', email: '', phone: '', role: 'phlebotomist',
     defaultSchedule: defaultWeeklySchedule(config.slots),
   });
 
+  const phoneRequired = form.role === 'phlebotomist';
+  const phoneValid = !phoneRequired || form.phone.trim().length >= 6;
+  const canSubmit = !!form.email.trim() && !!form.name.trim() && phoneValid;
+
   const submit = async () => {
-    if (!form.uid.trim() || !form.email.trim() || !form.name.trim()) return;
+    if (!canSubmit) return;
     setSaving(true);
     try {
-      const payload: any = {
-        uid: form.uid.trim(),
-        email: form.email.trim(),
-        name: form.name.trim(),
-        phone: form.phone.trim() || null,
-        role: form.role,
-        active: true,
-        createdAt: new Date().toISOString(),
-        createdBy: auth.currentUser?.uid || null,
-      };
-      if (form.role === 'phlebotomist') {
-        payload.defaultSchedule = form.defaultSchedule;
+      const idToken = await auth.currentUser?.getIdToken();
+      if (!idToken) throw new Error('Not signed in');
+      const res = await fetch('/api/staff', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${idToken}`,
+        },
+        body: JSON.stringify({
+          email: form.email.trim(),
+          name: form.name.trim(),
+          phone: form.phone.trim() || null,
+          role: form.role,
+          defaultSchedule: form.role === 'phlebotomist' ? form.defaultSchedule : undefined,
+        }),
+      });
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        throw new Error(err.error || `HTTP ${res.status}`);
       }
-      await setDoc(doc(db, 'staff', form.uid.trim()), payload, { merge: true });
       reset();
       setShowForm(false);
-    } catch (e) {
-      try { handleFirestoreError(e, OperationType.WRITE, `staff/${form.uid}`); }
-      catch (err: any) { onError(err); }
+    } catch (e: any) {
+      onError(e instanceof Error ? e : new Error(String(e)));
     } finally {
       setSaving(false);
     }
@@ -1264,18 +1476,22 @@ function StaffView({ staff, config, onError }: { staff: Staff[]; config: Booking
 
       {showForm && (
         <div className="p-5 border-b border-border-subtle bg-blue-50/50 space-y-3">
-          <p className="text-[10px] text-text-muted uppercase tracking-widest font-bold">
-            The staff member must sign in with Google once first so we know their Firebase UID.
-            Paste that UID below along with their details.
+          <p className="text-[11px] text-text-muted leading-relaxed">
+            {form.role === 'phlebotomist' ? (
+              <>
+                <span className="font-bold uppercase tracking-widest text-[10px] block mb-1">Phlebotomist onboarding</span>
+                A Firebase Auth account will be created with this email and the <strong>phone number (without country code)</strong> as the default password.
+                The phleb can change it from the login screen's <em>Forgot password?</em> link or from their dashboard.
+              </>
+            ) : (
+              <>
+                <span className="font-bold uppercase tracking-widest text-[10px] block mb-1">Admin onboarding</span>
+                A Firebase Auth account will be created with this email and the phone number (without country code) as the default password.
+                Admins normally sign in with Google, but the email/password pair also works.
+              </>
+            )}
           </p>
           <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-            <input
-              type="text"
-              placeholder="Firebase UID"
-              value={form.uid}
-              onChange={(e) => setForm({ ...form, uid: e.target.value })}
-              className="px-3 py-2 border border-border-subtle rounded-lg text-sm outline-none focus:border-primary"
-            />
             <input
               type="email"
               placeholder="Email"
@@ -1292,7 +1508,7 @@ function StaffView({ staff, config, onError }: { staff: Staff[]; config: Booking
             />
             <input
               type="tel"
-              placeholder="Phone (optional)"
+              placeholder={phoneRequired ? 'Phone (used as default password)' : 'Phone (optional)'}
               value={form.phone}
               onChange={(e) => setForm({ ...form, phone: e.target.value })}
               className="px-3 py-2 border border-border-subtle rounded-lg text-sm outline-none focus:border-primary"
@@ -1318,7 +1534,7 @@ function StaffView({ staff, config, onError }: { staff: Staff[]; config: Booking
           <div className="flex justify-end">
             <button
               onClick={submit}
-              disabled={saving || !form.uid.trim() || !form.email.trim() || !form.name.trim()}
+              disabled={saving || !canSubmit}
               className="px-4 py-2 bg-primary text-white text-[11px] font-bold uppercase tracking-wider rounded-lg hover:opacity-90 transition-opacity disabled:opacity-50"
             >
               {saving ? 'Saving…' : 'Save Staff Member'}

@@ -23,11 +23,87 @@ app.listen(PORT, "0.0.0.0", () => {
 async function init() {
   try {
     console.log("[BOOT] Loading heavy services...");
-    await import("./src/services/firebaseAdmin");
+    const { admin, adminDb } = await import("./src/services/firebaseAdmin");
     const { handleWhatsAppMessage } = await import("./src/services/botLogic");
     const { sendWhatsAppMessage } = await import("./src/services/whatsappService");
+    const { HARDCODED_ADMIN_EMAILS } = await import("./src/lib/adminEmails");
 
     app.use(express.json());
+
+    // Staff creation — only callable by an admin. Creates a Firebase Auth user
+    // (email + password) and the staff/{uid} doc in one shot.
+    app.post("/api/staff", async (req, res) => {
+      try {
+        const authHeader = req.headers.authorization || "";
+        const idToken = authHeader.startsWith("Bearer ") ? authHeader.slice(7) : "";
+        if (!idToken) return res.status(401).json({ error: "Missing token" });
+
+        let decoded;
+        try {
+          decoded = await admin.auth().verifyIdToken(idToken);
+        } catch {
+          return res.status(401).json({ error: "Invalid token" });
+        }
+
+        const callerEmail = decoded.email || "";
+        let isAdmin = HARDCODED_ADMIN_EMAILS.has(callerEmail);
+        if (!isAdmin) {
+          const callerStaff = await adminDb.collection("staff").doc(decoded.uid).get();
+          const data = callerStaff.exists ? callerStaff.data() : null;
+          isAdmin = !!(data && data.role === "admin" && data.active === true);
+        }
+        if (!isAdmin) return res.status(403).json({ error: "Admins only" });
+
+        const { email, name, phone, role, defaultSchedule } = req.body || {};
+        if (!email || !name || !role) return res.status(400).json({ error: "Missing fields" });
+        if (role !== "admin" && role !== "phlebotomist") {
+          return res.status(400).json({ error: "Invalid role" });
+        }
+        if (role === "phlebotomist" && (!phone || String(phone).length < 6)) {
+          return res.status(400).json({ error: "Phone (>=6 digits) required for phlebotomists" });
+        }
+
+        // Password = phone without country code. Firebase requires >= 6 chars.
+        const password = String(phone || "");
+
+        let newUid: string;
+        try {
+          const userRecord = await admin.auth().createUser({
+            email: String(email).trim(),
+            password,
+            displayName: String(name).trim(),
+          });
+          newUid = userRecord.uid;
+        } catch (e: any) {
+          return res.status(400).json({ error: e.message || String(e), code: e.code });
+        }
+
+        try {
+          const payload: any = {
+            uid: newUid,
+            email: String(email).trim(),
+            name: String(name).trim(),
+            phone: phone ? String(phone).trim() : null,
+            role,
+            active: true,
+            createdAt: new Date().toISOString(),
+            createdBy: decoded.uid,
+          };
+          if (role === "phlebotomist" && defaultSchedule) {
+            payload.defaultSchedule = defaultSchedule;
+          }
+          await adminDb.collection("staff").doc(newUid).set(payload, { merge: true });
+        } catch (e: any) {
+          await admin.auth().deleteUser(newUid).catch(() => { /* best-effort rollback */ });
+          return res.status(500).json({ error: "Failed to save staff record: " + (e.message || String(e)) });
+        }
+
+        return res.json({ uid: newUid });
+      } catch (err: any) {
+        console.error("[POST /api/staff]", err);
+        return res.status(500).json({ error: err.message || String(err) });
+      }
+    });
 
     // Routing
     app.get("/api/whatsapp/webhook", (req, res) => {

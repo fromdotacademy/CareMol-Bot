@@ -16,6 +16,7 @@ export interface Booking {
   patientPhone: string;
   patientAddress: string;
   testNames: string[];
+  ecgAddon?: boolean; // true when customer opted in to ₹50 ECG add-on. Locked at booking creation.
   timeSlot: string;
   bookingDate?: string; // "YYYY-MM-DD" in Asia/Kolkata. Optional only for legacy bookings; required for new writes.
   slotStart?: string;   // "HH:mm" 24h canonical start, e.g. "07:00".
@@ -112,6 +113,7 @@ export type ChatStep =
   | 'PATIENT_DETAILS_ENTRY'
   | 'AVAILABILITY_CHECK'
   | 'TEST_SELECTION'
+  | 'ECG_ADDON'
   | 'LEAD_CAPTURE_NAME'
   | 'LEAD_CAPTURE_PHONE'
   | 'PATIENT_BASIC_DETAILS'

@@ -19,7 +19,7 @@ There is no test framework configured. `security_spec.md` describes the rules-te
 
 ## Required environment
 
-Copy `.env.example` to `.env.local` (or `.env`) and set:
+Copy `.env.example` to `.env` and set:
 
 - `GEMINI_API_KEY` — used by `src/services/geminiService.ts` to parse free-form patient details.
 - `WHATSAPP_TOKEN`, `WHATSAPP_PHONE_ID` — WhatsApp Cloud API (Graph v17.0). When missing, `sendWhatsAppMessage` warns and no-ops, so the webhook is testable without credentials.
@@ -66,7 +66,7 @@ When you change conversation behavior (new step, new button, new translation key
 
 ```powershell
 # Step 1 — load env vars into the current shell session
-Get-Content .env.local | ForEach-Object { if ($_ -match '^([^#][^=]*)=(.*)$') { [System.Environment]::SetEnvironmentVariable($matches[1].Trim(), $matches[2].Trim(), 'Process') } }
+Get-Content .env | ForEach-Object { if ($_ -match '^([^#][^=]*)=(.*)$') { [System.Environment]::SetEnvironmentVariable($matches[1].Trim(), $matches[2].Trim(), 'Process') } }
 # Step 2 — preview (no writes)
 npx tsx scripts/backfill-patientid.ts --dry
 # Step 3 — write
@@ -145,3 +145,12 @@ Phlebotomists cannot list `bookings` unfiltered — the rules require a filter t
 - **Collection-group queries need a wildcard rule.** A path-based rule like `match /users/{u}/patients/{p}` does NOT cover `collectionGroup(db, 'patients')` — you also need `match /{path=**}/patients/{patientId}` at the top level. Both rules coexist: the path rule governs direct doc reads/writes; the wildcard rule enables group queries. Missing the wildcard produces a "Database Error: list on patients" runtime error.
 - The dev server intentionally disables file-watching when `DISABLE_HMR=true` (set by AI Studio) to prevent flicker during agent edits — leave the guard in `vite.config.ts` alone.
 - `scripts/smoke-test-date-flow.ts` is a one-shot Admin SDK E2E test for the bot's date+slot flow. Pre-load env vars (see patient invariant section above for the PowerShell one-liner), then run `npx tsx scripts/smoke-test-date-flow.ts`. It seeds a session, drives DATE_SELECTION → TIME_SLOT → FASTING_CHECK, asserts all new booking fields, and self-cleans.
+
+## Playwright E2E tests
+
+`npx playwright test` runs `tests/caremol.spec.ts` against a real dev server. Setup details worth knowing:
+
+- `playwright.config.ts` walks upward from its own location to find `.env` and passes the absolute path to the spawned dev server via `DOTENV_CONFIG_PATH`. A fresh worktree under `.claude/worktrees/<name>/` therefore picks up the parent project's `.env` automatically — no manual copy needed.
+- `reuseExistingServer: true` — if you already have `npm run dev` running, Playwright talks to that instead of spawning its own. Convenient, but means a stale server with old code can hide regressions; restart your dev server before a clean run.
+- `tests/auth/auth.setup.ts` mints a Firebase custom token via the dev-only `GET /api/dev-token` route (registered in `server.ts` when `NODE_ENV !== 'production'`) and writes `tests/auth/google-session.json` as Playwright `storageState`. That file is gitignored — it contains an admin auth token and regenerates on every run.
+- Email/password sign-in must be enabled in Firebase Console (Authentication → Sign-in method) for any test that exercises the new phlebotomist login flow.

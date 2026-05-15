@@ -2663,7 +2663,6 @@ function WhatsAppSimulator({ userId }: { userId: string }) {
   const [step, setStep] = useState<ChatStep>('LANGUAGE_SELECTION');
   const [language, setLanguage] = useState<Language | null>(null);
   const [patients, setPatients] = useState<PatientProfile[]>([]);
-  const [isInitializing, setIsInitializing] = useState(true);
   const [userName, setUserName] = useState<string>('');
   const [bookingData, setBookingData] = useState<Partial<Booking>>({
     status: 'Created',
@@ -2738,7 +2737,6 @@ function WhatsAppSimulator({ userId }: { userId: string }) {
           }]);
         }
         setInputVisible(false);
-        setIsInitializing(false);
       }
     };
     initSimulator();
@@ -2953,13 +2951,6 @@ function WhatsAppSimulator({ userId }: { userId: string }) {
           break;
 
         case 'LANGUAGE_SELECTION':
-          // If this is the trigger message (no bot response yet)
-          const botResponded = messages.some(m => m.sender === 'bot');
-          if (!botResponded) {
-            startChat();
-            return;
-          }
-
           if (value === 'English' || value === 'മലയാളം') {
             const lang: Language = value === 'English' ? 'en' : 'ml';
             setLanguage(lang);

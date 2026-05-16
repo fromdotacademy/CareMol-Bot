@@ -34,6 +34,50 @@ export function getISTToday(): string {
   return formatDateAsISO(new Date());
 }
 
+/** Current wall-clock in Asia/Kolkata: ISO date plus hour/minute (0-padded ints). */
+export function getISTNow(): { isoDate: string; hour: number; minute: number } {
+  const now = new Date();
+  const parts = new Intl.DateTimeFormat("en-GB", {
+    timeZone: IST_TZ,
+    hour: "2-digit",
+    minute: "2-digit",
+    hour12: false,
+  }).formatToParts(now);
+  const hour = Number(parts.find((p) => p.type === "hour")?.value ?? "0");
+  const minute = Number(parts.find((p) => p.type === "minute")?.value ?? "0");
+  return { isoDate: formatDateAsISO(now), hour, minute };
+}
+
+/** Minimum minutes between "now" and a slot's start for it to remain bookable
+ *  on the same day. Slots inside this window are filtered out by
+ *  filterBookableSlots(). */
+export const SAME_DAY_LEAD_MINUTES = 60;
+
+/** Minutes from current IST clock to slotStart on isoDate.
+ *  - Positive: slot is in the future
+ *  - Negative or zero: slot start has passed
+ *  - Infinity: isoDate is after today (we never block future-day slots) */
+export function minutesUntilSlot(slotStart: string, isoDate: string): number {
+  const now = getISTNow();
+  if (isoDate > now.isoDate) return Infinity;
+  if (isoDate < now.isoDate) return -Infinity;
+  const [hStr, mStr] = slotStart.split(":");
+  const slotMinutes = Number(hStr) * 60 + Number(mStr ?? "0");
+  const nowMinutes = now.hour * 60 + now.minute;
+  return slotMinutes - nowMinutes;
+}
+
+/** Drops slots whose start is less than `leadMinutes` away on the same day.
+ *  No-op for dates other than today (future days return all slots). */
+export function filterBookableSlots(
+  slots: SlotConfig[],
+  isoDate: string,
+  leadMinutes: number = SAME_DAY_LEAD_MINUTES,
+): SlotConfig[] {
+  if (isoDate !== getISTToday()) return slots;
+  return slots.filter((s) => minutesUntilSlot(s.start, isoDate) >= leadMinutes);
+}
+
 /** Next n consecutive calendar dates starting from today (IST), as YYYY-MM-DD. */
 export function getNextNDates(n: number): string[] {
   const today = getISTToday();
@@ -171,6 +215,23 @@ export function rememberBookingConfig(config: BookingConfig): void {
 /** Clear the cache — call after writing config/booking. */
 export function invalidateBookingConfigCache(): void {
   configCache = null;
+}
+
+/** Dates the customer can actually book in the next `maxAdvanceDays` window.
+ *  Drops today if every same-day slot is past the lead-time cutoff, and drops
+ *  any date whose weekday template is an empty list (admin-set "closed"). */
+export function bookableDates(cfg: BookingConfig): string[] {
+  const dates = getNextNDates(cfg.maxAdvanceDays);
+  return dates.filter((d) => filterBookableSlots(slotsForDate(cfg, d), d).length > 0);
+}
+
+/** Slot template for a specific date. Returns the per-weekday override if the
+ *  admin has customized that weekday (including an empty array, which means
+ *  "closed by template"); otherwise falls back to the global cfg.slots. */
+export function slotsForDate(cfg: BookingConfig, isoDate: string): SlotConfig[] {
+  const wd = weekdayKey(isoDate);
+  const override = cfg.slotsByWeekday?.[wd];
+  return override !== undefined ? override : cfg.slots;
 }
 
 /** Fallback when config/booking has not been seeded. Mirrors

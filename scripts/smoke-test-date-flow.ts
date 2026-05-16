@@ -13,7 +13,17 @@
 
 import { adminDb } from "../src/services/firebaseAdmin";
 import { handleWhatsAppMessage, type BotSession } from "../src/services/botLogic";
-import { getNextNDates, formatDateLabel, formatSlotLabel, defaultBookingConfig } from "../src/services/slotService";
+import {
+  formatDateLabel,
+  formatSlotLabel,
+  defaultBookingConfig,
+  bookableDates,
+  slotsForDate,
+  filterBookableSlots,
+  minutesUntilSlot,
+  SAME_DAY_LEAD_MINUTES,
+  getISTToday,
+} from "../src/services/slotService";
 import { generateId } from "../src/lib/utils";
 
 const TEST_PHONE = "smoke-test-" + Date.now();
@@ -94,36 +104,51 @@ async function run() {
   const r1 = await handleWhatsAppMessage(TEST_PHONE, "Yes, it's correct");
   const s1 = await getSession();
   const cfg = defaultBookingConfig();
-  const expectedDates = getNextNDates(cfg.maxAdvanceDays);
+  // bookableDates filters out today if every slot is within the same-day lead window.
+  const expectedDates = bookableDates(cfg);
   const expectedDateLabels = expectedDates.map((d) => formatDateLabel(d, "en"));
   logStep("transitioned to DATE_SELECTION", s1.step === "DATE_SELECTION", `step=${s1.step}`);
   logStep(
-    "response contains date labels",
+    "response contains all bookable date labels",
     r1.length > 0 && expectedDateLabels.every((lbl) => r1[0].buttons?.includes(lbl)),
     `buttons=${JSON.stringify(r1[0]?.buttons)}`
   );
   logStep("response contains chooseDate prompt", r1[0]?.text?.toLowerCase().includes("date") ?? false);
 
-  // Step 2: pick "Today" -> expect TIME_SLOT + bookingDate set
-  console.log("\n[2] Sending 'Today'...");
-  const r2 = await handleWhatsAppMessage(TEST_PHONE, "Today");
+  // Step 2: pick first bookable date -> expect TIME_SLOT + bookingDate set
+  const chosenDate = expectedDates[0];
+  const chosenDateLabel = formatDateLabel(chosenDate, "en");
+  console.log(`\n[2] Sending '${chosenDateLabel}' (first bookable date)...`);
+  const r2 = await handleWhatsAppMessage(TEST_PHONE, chosenDateLabel);
   const s2 = await getSession();
-  const today = expectedDates[0];
   logStep("transitioned to TIME_SLOT", s2.step === "TIME_SLOT", `step=${s2.step}`);
   logStep(
-    "bookingData.bookingDate is today",
-    s2.bookingData.bookingDate === today,
-    `got=${s2.bookingData.bookingDate} expected=${today}`
+    "bookingData.bookingDate matches selection",
+    s2.bookingData.bookingDate === chosenDate,
+    `got=${s2.bookingData.bookingDate} expected=${chosenDate}`
   );
-  const expectedSlotLabels = cfg.slots.map((s) => formatSlotLabel(s, "en"));
+  const expectedSlots = filterBookableSlots(slotsForDate(cfg, chosenDate), chosenDate);
+  const expectedSlotLabels = expectedSlots.map((s) => formatSlotLabel(s, "en"));
   logStep(
-    "response contains slot labels",
+    "response contains bookable slot labels (1hr lead filter applied)",
     r2.length > 0 && expectedSlotLabels.every((lbl) => r2[0].buttons?.includes(lbl)),
     `buttons=${JSON.stringify(r2[0]?.buttons)}`
   );
+  if (chosenDate === getISTToday()) {
+    const allHaveLeadTime = expectedSlots.every((s) => minutesUntilSlot(s.start, chosenDate) >= SAME_DAY_LEAD_MINUTES);
+    logStep(
+      "all offered same-day slots are >= lead-time away",
+      allHaveLeadTime,
+      `lead=${SAME_DAY_LEAD_MINUTES}min`
+    );
+  }
 
   // Step 3: pick first slot -> expect FASTING_CHECK + slot fields populated
-  const firstSlot = cfg.slots[0];
+  const firstSlot = expectedSlots[0];
+  if (!firstSlot) {
+    console.log("[smoke] no bookable slots for chosen date — skipping step 3");
+    return;
+  }
   const firstSlotLabel = formatSlotLabel(firstSlot, "en");
   console.log(`\n[3] Sending '${firstSlotLabel}'...`);
   const r3 = await handleWhatsAppMessage(TEST_PHONE, firstSlotLabel);

@@ -18,9 +18,11 @@ import {
   defaultBookingConfig,
   rememberBookingConfig,
   getCachedBookingConfig,
-  getNextNDates,
   formatDateLabel,
   formatSlotLabel,
+  slotsForDate,
+  filterBookableSlots,
+  bookableDates,
 } from './slotService';
 
 export interface BotSession {
@@ -559,7 +561,7 @@ export async function handleWhatsAppMessage(
           );
         }
         const cfgForDate = await loadBookingConfig();
-        const datesForPrompt = getNextNDates(cfgForDate.maxAdvanceDays);
+        const datesForPrompt = bookableDates(cfgForDate);
         const dateLabels = datesForPrompt.map(d => formatDateLabel(d, session.language || 'en'));
         session.step = 'DATE_SELECTION';
         addResponse(t.chooseDate, [...dateLabels, t.cancelBooking]);
@@ -571,13 +573,15 @@ export async function handleWhatsAppMessage(
 
     case 'DATE_SELECTION': {
       const cfg = await loadBookingConfig();
-      const dates = getNextNDates(cfg.maxAdvanceDays);
+      const dates = bookableDates(cfg);
       const dateLabels = dates.map(d => formatDateLabel(d, session.language || 'en'));
       const idx = dateLabels.indexOf(value);
       if (idx >= 0) {
-        session.bookingData.bookingDate = dates[idx];
+        const chosenDate = dates[idx];
+        session.bookingData.bookingDate = chosenDate;
         session.step = 'TIME_SLOT';
-        const slotLabels = cfg.slots.map(s => formatSlotLabel(s, session.language || 'en'));
+        const bookable = filterBookableSlots(slotsForDate(cfg, chosenDate), chosenDate);
+        const slotLabels = bookable.map(s => formatSlotLabel(s, session.language || 'en'));
         addResponse(t.timeSlot, [...slotLabels, t.cancelBooking]);
       } else {
         const advanceMsg = t.advanceLimitError.replace('{n}', String(cfg.maxAdvanceDays));
@@ -588,10 +592,12 @@ export async function handleWhatsAppMessage(
 
     case 'TIME_SLOT': {
       const cfg = await loadBookingConfig();
-      const slotLabels = cfg.slots.map(s => formatSlotLabel(s, session.language || 'en'));
+      const chosenDate = session.bookingData.bookingDate || '';
+      const bookable = filterBookableSlots(slotsForDate(cfg, chosenDate), chosenDate);
+      const slotLabels = bookable.map(s => formatSlotLabel(s, session.language || 'en'));
       const idx = slotLabels.indexOf(value);
       if (idx >= 0) {
-        const slot = cfg.slots[idx];
+        const slot = bookable[idx];
         session.bookingData.slotStart = slot.start;
         session.bookingData.slotEnd = slot.end;
         session.bookingData.timeSlot = value;

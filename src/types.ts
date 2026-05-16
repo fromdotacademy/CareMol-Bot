@@ -79,6 +79,10 @@ export interface SlotConfig {
 // bot implementations (cached client-side).
 export interface BookingConfig {
   slots: SlotConfig[];
+  // Optional per-weekday overrides. When a weekday key is present, that day uses
+  // those slots instead of the global `slots` list. Empty array = no slots that
+  // day (effectively closed by template). Omit a key to inherit `slots`.
+  slotsByWeekday?: Partial<Record<keyof WeeklySchedule, SlotConfig[]>>;
   maxAdvanceDays: number;
   timezone: string; // e.g. "Asia/Kolkata"
   // Service-area gate (all optional — helpers fall back to safe defaults if missing).

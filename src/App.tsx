@@ -94,6 +94,9 @@ import {
   phlebAvailabilityDocId,
   getNextNDates,
   getISTToday,
+  slotsForDate,
+  filterBookableSlots,
+  bookableDates,
 } from './services/slotService';
 
 // --- ROLE DETECTION ---
@@ -1542,7 +1545,7 @@ function StaffView({ staff, config, onError }: { staff: Staff[]; config: Booking
             <div className="bg-white border border-border-subtle rounded-lg p-3">
               <DefaultScheduleEditor
                 value={form.defaultSchedule}
-                templateSlots={config.slots}
+                config={config}
                 onChange={(next) => setForm({ ...form, defaultSchedule: next })}
               />
             </div>
@@ -1619,7 +1622,7 @@ function StaffView({ staff, config, onError }: { staff: Staff[]; config: Booking
                   <td colSpan={6} className="px-6 py-4">
                     <DefaultScheduleEditor
                       value={editingScheduleDraft}
-                      templateSlots={config.slots}
+                      config={config}
                       onChange={setEditingScheduleDraft}
                     />
                     <div className="flex items-center justify-end gap-2 mt-3">
@@ -1665,13 +1668,29 @@ const WEEKDAY_LABELS: { key: keyof WeeklySchedule; label: string }[] = [
 
 function DefaultScheduleEditor({
   value,
-  templateSlots,
+  config,
   onChange,
 }: {
   value: WeeklySchedule;
-  templateSlots: SlotConfig[];
+  config: BookingConfig;
   onChange: (next: WeeklySchedule) => void;
 }) {
+  // Per-weekday template (override if present, else global cfg.slots).
+  const slotsForDay = (day: keyof WeeklySchedule): SlotConfig[] => {
+    const override = config.slotsByWeekday?.[day];
+    return override !== undefined ? override : config.slots;
+  };
+
+  // Union of all distinct slot starts across the 7 weekdays — column header.
+  const headerSlots = useMemo(() => {
+    const seen = new Map<string, SlotConfig>();
+    (['sun','mon','tue','wed','thu','fri','sat'] as (keyof WeeklySchedule)[]).forEach(day => {
+      slotsForDay(day).forEach(s => { if (!seen.has(s.start)) seen.set(s.start, s); });
+    });
+    return Array.from(seen.values()).sort((a, b) => a.start.localeCompare(b.start));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [config.slots, config.slotsByWeekday]);
+
   const toggleCell = (day: keyof WeeklySchedule, slotStart: string) => {
     const current = value[day] ?? [];
     const has = current.includes(slotStart);
@@ -1680,7 +1699,7 @@ function DefaultScheduleEditor({
   };
 
   const fillRow = (day: keyof WeeklySchedule) => {
-    onChange({ ...value, [day]: templateSlots.map(s => s.start) });
+    onChange({ ...value, [day]: slotsForDay(day).map(s => s.start) });
   };
   const clearRow = (day: keyof WeeklySchedule) => {
     onChange({ ...value, [day]: [] });
@@ -1701,7 +1720,7 @@ function DefaultScheduleEditor({
           <thead>
             <tr>
               <th className="text-left py-2 pr-3 text-[10px] font-black text-text-muted uppercase tracking-widest">Day</th>
-              {templateSlots.map(s => (
+              {headerSlots.map(s => (
                 <th key={s.start} className="text-center py-2 px-2 text-[10px] font-bold text-text-dark whitespace-nowrap">
                   {formatSlotLabel(s)}
                 </th>
@@ -1712,19 +1731,27 @@ function DefaultScheduleEditor({
           <tbody className="divide-y divide-border-subtle">
             {WEEKDAY_LABELS.map(({ key, label }) => {
               const cells = value[key] ?? [];
+              const dayTemplateStarts = new Set(slotsForDay(key).map(s => s.start));
               return (
                 <tr key={key}>
                   <td className="py-1.5 pr-3 font-bold text-text-dark text-xs">{label}</td>
-                  {templateSlots.map(s => (
-                    <td key={s.start} className="py-1.5 px-2 text-center">
-                      <input
-                        type="checkbox"
-                        checked={cells.includes(s.start)}
-                        onChange={() => toggleCell(key, s.start)}
-                        className="w-4 h-4 accent-primary cursor-pointer"
-                      />
-                    </td>
-                  ))}
+                  {headerSlots.map(s => {
+                    const inTemplate = dayTemplateStarts.has(s.start);
+                    return (
+                      <td key={s.start} className="py-1.5 px-2 text-center">
+                        {inTemplate ? (
+                          <input
+                            type="checkbox"
+                            checked={cells.includes(s.start)}
+                            onChange={() => toggleCell(key, s.start)}
+                            className="w-4 h-4 accent-primary cursor-pointer"
+                          />
+                        ) : (
+                          <span className="text-slate-300" title="Slot not in this weekday's template">—</span>
+                        )}
+                      </td>
+                    );
+                  })}
                   <td className="py-1.5 pl-3 text-right whitespace-nowrap">
                     <button
                       onClick={() => fillRow(key)}
@@ -1756,6 +1783,7 @@ function DefaultScheduleEditor({
 // and by the tab being inside DashboardView).
 function SettingsView({ config, onError }: { config: BookingConfig; onError: (err: Error) => void }) {
   const [slots, setSlots] = useState<SlotConfig[]>(config.slots);
+  const [slotsByWeekday, setSlotsByWeekday] = useState<Partial<Record<keyof WeeklySchedule, SlotConfig[]>>>(config.slotsByWeekday ?? {});
   const [maxAdvanceDays, setMaxAdvanceDays] = useState<number>(config.maxAdvanceDays);
   const [servicePins, setServicePins] = useState<string[]>(config.servicePins?.length ? config.servicePins : ['679326']);
   const [pinDraft, setPinDraft] = useState('');
@@ -1772,6 +1800,7 @@ function SettingsView({ config, onError }: { config: BookingConfig; onError: (er
   useEffect(() => {
     if (!dirty) {
       setSlots(config.slots);
+      setSlotsByWeekday(config.slotsByWeekday ?? {});
       setMaxAdvanceDays(config.maxAdvanceDays);
       setServicePins(config.servicePins?.length ? config.servicePins : ['679326']);
       setServiceRadiusKm(typeof config.serviceRadiusKm === 'number' ? config.serviceRadiusKm : 5);
@@ -1783,15 +1812,21 @@ function SettingsView({ config, onError }: { config: BookingConfig; onError: (er
   const validation = useMemo<string | null>(() => {
     if (slots.length === 0) return 'At least one slot is required.';
     const re = /^([01]\d|2[0-3]):[0-5]\d$/;
-    for (let i = 0; i < slots.length; i++) {
-      const s = slots[i];
-      if (!re.test(s.start) || !re.test(s.end)) {
-        return `Slot ${i + 1}: times must be HH:mm (24-hour).`;
+    const validateList = (list: SlotConfig[], scope: string): string | null => {
+      for (let i = 0; i < list.length; i++) {
+        const s = list[i];
+        if (!re.test(s.start) || !re.test(s.end)) return `${scope} slot ${i + 1}: times must be HH:mm (24-hour).`;
+        if (s.start >= s.end) return `${scope} slot ${i + 1}: end must be after start.`;
+        if (i > 0 && s.start < list[i - 1].end) return `${scope} slot ${i + 1}: overlaps with slot ${i}.`;
       }
-      if (s.start >= s.end) return `Slot ${i + 1}: end must be after start.`;
-      if (i > 0 && s.start < slots[i - 1].end) {
-        return `Slot ${i + 1}: overlaps with slot ${i}.`;
-      }
+      return null;
+    };
+    const globalErr = validateList(slots, 'Default');
+    if (globalErr) return globalErr;
+    for (const [day, list] of Object.entries(slotsByWeekday)) {
+      if (!list) continue;
+      const dayErr = validateList(list, `${day.toUpperCase()}`);
+      if (dayErr) return dayErr;
     }
     if (!Number.isInteger(maxAdvanceDays) || maxAdvanceDays < 1 || maxAdvanceDays > 30) {
       return 'Max advance days must be a whole number between 1 and 30.';
@@ -1810,7 +1845,7 @@ function SettingsView({ config, onError }: { config: BookingConfig; onError: (er
       return 'Service center longitude must be between -180 and 180.';
     }
     return null;
-  }, [slots, maxAdvanceDays, servicePins, serviceRadiusKm, serviceCenterLat, serviceCenterLng]);
+  }, [slots, slotsByWeekday, maxAdvanceDays, servicePins, serviceRadiusKm, serviceCenterLat, serviceCenterLng]);
 
   const addPin = () => {
     const trimmed = pinDraft.trim();
@@ -1849,6 +1884,7 @@ function SettingsView({ config, onError }: { config: BookingConfig; onError: (er
     try {
       await setDoc(doc(db, 'config', 'booking'), {
         slots,
+        slotsByWeekday,
         maxAdvanceDays,
         timezone: config.timezone || 'Asia/Kolkata',
         servicePins,
@@ -1939,6 +1975,114 @@ function SettingsView({ config, onError }: { config: BookingConfig; onError: (er
                 </button>
               </div>
             ))}
+          </div>
+        </section>
+
+        <section>
+          <div className="flex items-center justify-between mb-3">
+            <h4 className="text-[10px] font-black text-text-muted uppercase tracking-widest">Per-Weekday Slot Overrides</h4>
+            <span className="text-[10px] text-text-muted">Optional. Inherit defaults unless customized.</span>
+          </div>
+          <div className="space-y-2">
+            {WEEKDAY_LABELS.map(({ key, label }) => {
+              const list = slotsByWeekday[key];
+              const customized = list !== undefined;
+              const setList = (next: SlotConfig[] | undefined) => {
+                const draft: Partial<Record<keyof WeeklySchedule, SlotConfig[]>> = { ...slotsByWeekday };
+                if (next === undefined) delete draft[key]; else draft[key] = next;
+                setSlotsByWeekday(draft);
+                setDirty(true);
+              };
+              const addDaySlot = () => {
+                const cur = list ?? [];
+                const last = cur[cur.length - 1];
+                const nextStart = last ? last.end : '07:00';
+                setList([...cur, { start: nextStart, end: bumpHour(nextStart) }]);
+              };
+              const updateDaySlot = (i: number, patch: Partial<SlotConfig>) => {
+                const cur = list ?? [];
+                const next = cur.slice();
+                next[i] = { ...next[i], ...patch };
+                setList(next);
+              };
+              const removeDaySlot = (i: number) => {
+                const cur = list ?? [];
+                setList(cur.filter((_, j) => j !== i));
+              };
+              return (
+                <div key={key} className="border border-border-subtle rounded-lg bg-white">
+                  <div className="flex items-center justify-between px-3 py-2 bg-slate-50">
+                    <div className="flex items-center gap-3">
+                      <span className="text-xs font-bold text-text-dark w-24">{label}</span>
+                      <span className="text-[10px] text-text-muted">
+                        {!customized && 'Inherits default slots'}
+                        {customized && list!.length === 0 && 'Closed (no slots)'}
+                        {customized && list!.length > 0 && `${list!.length} custom slot${list!.length === 1 ? '' : 's'}`}
+                      </span>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      {customized ? (
+                        <>
+                          <button
+                            onClick={addDaySlot}
+                            className="text-[10px] font-bold text-primary hover:underline flex items-center gap-1"
+                          >
+                            <Plus className="w-3 h-3" /> Slot
+                          </button>
+                          <button
+                            onClick={() => setList(undefined)}
+                            className="text-[10px] font-bold text-text-muted hover:underline"
+                          >
+                            Reset to default
+                          </button>
+                        </>
+                      ) : (
+                        <button
+                          onClick={() => setList([])}
+                          className="text-[10px] font-bold text-primary hover:underline"
+                        >
+                          Customize
+                        </button>
+                      )}
+                    </div>
+                  </div>
+                  {customized && list!.length > 0 && (
+                    <div className="p-3 space-y-2">
+                      {list!.map((s, i) => (
+                        <div key={i} className="flex items-center gap-3 bg-slate-50 border border-border-subtle rounded-lg px-3 py-1.5">
+                          <span className="text-[10px] font-bold text-text-muted w-6">#{i + 1}</span>
+                          <input
+                            type="time"
+                            value={s.start}
+                            onChange={(e) => updateDaySlot(i, { start: e.target.value })}
+                            className="px-2 py-1 border border-border-subtle rounded text-sm outline-none focus:border-primary bg-white"
+                          />
+                          <span className="text-text-muted text-sm">→</span>
+                          <input
+                            type="time"
+                            value={s.end}
+                            onChange={(e) => updateDaySlot(i, { end: e.target.value })}
+                            className="px-2 py-1 border border-border-subtle rounded text-sm outline-none focus:border-primary bg-white"
+                          />
+                          <span className="text-[10px] text-text-muted ml-2 flex-1">
+                            {/^([01]\d|2[0-3]):[0-5]\d$/.test(s.start) && /^([01]\d|2[0-3]):[0-5]\d$/.test(s.end)
+                              ? formatSlotLabel(s)
+                              : '—'}
+                          </span>
+                          <button
+                            onClick={() => removeDaySlot(i)}
+                            title="Remove slot"
+                            className="p-1.5 rounded hover:bg-red-50 text-red-500 transition-colors"
+                          >
+                            <Trash2 className="w-3.5 h-3.5" />
+                          </button>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              );
+            })}
           </div>
         </section>
 
@@ -2123,10 +2267,13 @@ function ScheduleView({
     ) || null;
   };
 
+  // Slot template that applies on the selected date (weekday override or global).
+  const dateSlots = useMemo(() => slotsForDate(config, selectedDate), [config, selectedDate]);
+
   // Off-template slots: bookings on this date with a slotStart that isn't in
   // the current template. Surfaced as a separate row in the grid header.
   const offTemplateSlotStarts = useMemo(() => {
-    const templateStarts = new Set(config.slots.map(s => s.start));
+    const templateStarts = new Set(dateSlots.map(s => s.start));
     const set = new Set<string>();
     bookings.forEach(b => {
       if (b.bookingDate === selectedDate && b.slotStart && !templateStarts.has(b.slotStart) && b.status !== 'Completed') {
@@ -2134,7 +2281,7 @@ function ScheduleView({
       }
     });
     return Array.from(set).sort();
-  }, [bookings, selectedDate, config.slots]);
+  }, [bookings, selectedDate, dateSlots]);
 
   const writeOverride = async (phleb: Staff, payload: Partial<PhlebAvailability>) => {
     const docId = phlebAvailabilityDocId(selectedDate, phleb.uid);
@@ -2234,7 +2381,7 @@ function ScheduleView({
           <thead>
             <tr className="bg-slate-50 border-b border-border-subtle">
               <th className="text-left py-3 px-4 text-[10px] font-black text-text-muted uppercase tracking-widest">Phlebotomist</th>
-              {config.slots.map(s => (
+              {dateSlots.map(s => (
                 <th key={s.start} className="text-center py-3 px-2 text-[10px] font-bold text-text-dark whitespace-nowrap">
                   {formatSlotLabel(s)}
                 </th>
@@ -2250,7 +2397,7 @@ function ScheduleView({
           <tbody className="divide-y divide-border-subtle">
             {activePhlebs.length === 0 ? (
               <tr>
-                <td colSpan={2 + config.slots.length + offTemplateSlotStarts.length} className="py-10 text-center text-text-muted text-xs">
+                <td colSpan={2 + dateSlots.length + offTemplateSlotStarts.length} className="py-10 text-center text-text-muted text-xs">
                   No active phlebotomists. Add one in the Staff tab.
                 </td>
               </tr>
@@ -2270,7 +2417,7 @@ function ScheduleView({
                       )}
                     </div>
                   </td>
-                  {config.slots.map(s => {
+                  {dateSlots.map(s => {
                     const isOn = !dayOff && effective.includes(s.start);
                     const conflict = isOn ? bookingAt(p.uid, s.start) : null;
                     return (
@@ -3482,7 +3629,7 @@ function WhatsAppSimulator({ userId }: { userId: string }) {
                 console.error('[Simulator] Failed to update address on patient', e);
               }
             }
-            const dates = getNextNDates(config.maxAdvanceDays);
+            const dates = bookableDates(config);
             const dateLabels = dates.map(d => formatDateLabel(d, language || 'en'));
             setStep('DATE_SELECTION');
             addBotMessage(t.chooseDate, [...dateLabels, t.cancelBooking]);
@@ -3493,12 +3640,14 @@ function WhatsAppSimulator({ userId }: { userId: string }) {
           break;
 
         case 'DATE_SELECTION': {
-          const dates = getNextNDates(config.maxAdvanceDays);
+          const dates = bookableDates(config);
           const dateLabels = dates.map(d => formatDateLabel(d, language || 'en'));
           const dIdx = dateLabels.indexOf(value);
           if (dIdx >= 0) {
-            setBookingData(prev => ({ ...prev, bookingDate: dates[dIdx] }));
-            const slotLabels = config.slots.map(s => formatSlotLabel(s, language || 'en'));
+            const chosenDate = dates[dIdx];
+            setBookingData(prev => ({ ...prev, bookingDate: chosenDate }));
+            const bookable = filterBookableSlots(slotsForDate(config, chosenDate), chosenDate);
+            const slotLabels = bookable.map(s => formatSlotLabel(s, language || 'en'));
             setStep('TIME_SLOT');
             addBotMessage(t.timeSlot, [...slotLabels, t.cancelBooking]);
           } else {
@@ -3509,13 +3658,15 @@ function WhatsAppSimulator({ userId }: { userId: string }) {
         }
 
         case 'TIME_SLOT': {
-          const slotLabels = config.slots.map(s => formatSlotLabel(s, language || 'en'));
+          const chosenDate = bookingData.bookingDate || '';
+          const bookable = filterBookableSlots(slotsForDate(config, chosenDate), chosenDate);
+          const slotLabels = bookable.map(s => formatSlotLabel(s, language || 'en'));
           const sIdx = slotLabels.indexOf(value);
           if (sIdx < 0) {
             addBotMessage(t.timeSlot, [...slotLabels, t.cancelBooking]);
             return;
           }
-          const slot = config.slots[sIdx];
+          const slot = bookable[sIdx];
           setBookingData(prev => ({
             ...prev,
             slotStart: slot.start,

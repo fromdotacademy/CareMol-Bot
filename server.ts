@@ -14,11 +14,6 @@ app.get("/api/health", (req, res) => {
   res.json({ status: "ok", time: new Date().toISOString(), boot: "fast" });
 });
 
-// 2. LISTEN IMMEDIATELY
-app.listen(PORT, "0.0.0.0", () => {
-  console.log(`[BOOT] Server listening on port ${PORT}`);
-});
-
 // 3. BACKGROUND INITIALIZE
 async function init() {
   try {
@@ -279,4 +274,11 @@ async function init() {
   }
 }
 
-init();
+export { app, init };
+
+if (!process.env.VERCEL) {
+  app.listen(PORT, "0.0.0.0", () => {
+    console.log(`[BOOT] Server listening on port ${PORT}`);
+  });
+  init();
+}

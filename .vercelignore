@@ -1,0 +1,5 @@
+node_modules
+.env
+.env.*
+.claude
+tests/auth/google-session.json

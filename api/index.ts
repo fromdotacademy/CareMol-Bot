@@ -1,4 +1,4 @@
-import { app, init } from "../server";
+import { app, init } from "../server.js";
 
 // Called once on cold start; subsequent warm invocations reuse the resolved promise
 const initPromise = init();

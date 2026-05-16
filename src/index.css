@@ -1,20 +1,181 @@
-@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;900&family=Noto+Sans+Malayalam:wght@400;700&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=Geist:wght@400;500;600;700&family=Geist+Mono:wght@400;500;600&family=Noto+Sans+Malayalam:wght@400;700&display=swap');
 @import "tailwindcss";
 
 @theme {
-  --color-primary: #0D9488;
+  /* Brand accent — preserved teal */
+  --color-accent: #0D9488;
+  --color-accent-hover: #0F766E;
+  --color-accent-soft: #CCFBF1;
+  --color-accent-foreground: #FFFFFF;
   --color-whatsapp: #25D366;
-  --color-bg-app: #F1F5F9;
-  --color-text-dark: #1E293B;
-  --color-text-muted: #64748B;
-  --color-border-subtle: #E2E8F0;
-  
-  --font-sans: "Inter", "Noto Sans Malayalam", -apple-system, sans-serif;
-  
+
+  /* Surfaces (light defaults — overridden by html[data-theme="dark"] below) */
+  --color-canvas: #FAFAF9;
+  --color-surface: #FFFFFF;
+  --color-sunken: #F4F4F5;
+  --color-overlay: rgba(15, 23, 42, 0.45);
+
+  /* Borders */
+  --color-border-subtle: #E7E5E4;
+  --color-border-strong: #D6D3D1;
+
+  /* Text */
+  --color-text-primary: #18181B;
+  --color-text-secondary: #52525B;
+  --color-text-tertiary: #A1A1AA;
+  --color-text-inverse: #FAFAF9;
+
+  /* Legacy aliases (kept so unconverted components still render correctly) */
+  --color-primary: #0D9488;
+  --color-bg-app: #FAFAF9;
+  --color-text-dark: #18181B;
+  --color-text-muted: #52525B;
+
+  /* Semantic status palette — booking lifecycle */
+  --color-status-created: #B45309;        /* amber-700 */
+  --color-status-created-bg: #FEF3C7;     /* amber-100 */
+  --color-status-created-ring: #FDE68A;   /* amber-200 */
+
+  --color-status-assigned: #1D4ED8;       /* blue-700 */
+  --color-status-assigned-bg: #DBEAFE;
+  --color-status-assigned-ring: #BFDBFE;
+
+  --color-status-collected: #6D28D9;      /* violet-700 */
+  --color-status-collected-bg: #EDE9FE;
+  --color-status-collected-ring: #DDD6FE;
+
+  --color-status-processing: #4338CA;     /* indigo-700 */
+  --color-status-processing-bg: #E0E7FF;
+  --color-status-processing-ring: #C7D2FE;
+
+  --color-status-completed: #047857;      /* emerald-700 */
+  --color-status-completed-bg: #D1FAE5;
+  --color-status-completed-ring: #A7F3D0;
+
+  --color-status-danger: #B91C1C;         /* red-700 */
+  --color-status-danger-bg: #FEE2E2;
+  --color-status-danger-ring: #FECACA;
+
+  /* Typography */
+  --font-sans: "Geist", "Noto Sans Malayalam", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  --font-mono: "Geist Mono", ui-monospace, SFMono-Regular, "SF Mono", Menlo, monospace;
+  --font-malayalam: "Noto Sans Malayalam", "Geist", sans-serif;
+
+  /* Radius scale — tight & precise */
+  --radius-sm: 6px;
+  --radius-md: 8px;
+  --radius-lg: 12px;
+  --radius-xl: 16px;
+  /* Legacy chunky radii preserved for the simulator phone chassis */
   --radius-xl-2: 24px;
   --radius-xl-3: 40px;
+
+  /* Shadows — restrained */
+  --shadow-xs: 0 1px 2px rgba(15, 23, 42, 0.04);
+  --shadow-sm: 0 1px 2px rgba(15, 23, 42, 0.05), 0 1px 3px rgba(15, 23, 42, 0.06);
+  --shadow-md: 0 4px 6px -1px rgba(15, 23, 42, 0.08), 0 2px 4px -2px rgba(15, 23, 42, 0.05);
+  --shadow-lg: 0 10px 15px -3px rgba(15, 23, 42, 0.08), 0 4px 6px -4px rgba(15, 23, 42, 0.05);
+}
+
+/* Dark theme token overrides */
+html[data-theme="dark"] {
+  --color-canvas: #0A0A0B;
+  --color-surface: #111113;
+  --color-sunken: #18181B;
+  --color-overlay: rgba(0, 0, 0, 0.65);
+
+  --color-border-subtle: #27272A;
+  --color-border-strong: #3F3F46;
+
+  --color-text-primary: #FAFAFA;
+  --color-text-secondary: #A1A1AA;
+  --color-text-tertiary: #71717A;
+  --color-text-inverse: #18181B;
+
+  --color-bg-app: #0A0A0B;
+  --color-text-dark: #FAFAFA;
+  --color-text-muted: #A1A1AA;
+
+  --color-accent-soft: #134E4A;
+
+  --color-status-created-bg: #422006;
+  --color-status-created-ring: #78350F;
+  --color-status-assigned-bg: #172554;
+  --color-status-assigned-ring: #1E3A8A;
+  --color-status-collected-bg: #2E1065;
+  --color-status-collected-ring: #4C1D95;
+  --color-status-processing-bg: #1E1B4B;
+  --color-status-processing-ring: #312E81;
+  --color-status-completed-bg: #022C22;
+  --color-status-completed-ring: #064E3B;
+  --color-status-danger-bg: #450A0A;
+  --color-status-danger-ring: #7F1D1D;
+}
+
+html, body, #root {
+  height: 100%;
 }
 
 body {
-  @apply bg-bg-app text-text-dark antialiased;
+  font-family: var(--font-sans);
+  background: var(--color-canvas);
+  color: var(--color-text-primary);
+  font-feature-settings: "cv11", "ss01", "ss03";
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  text-rendering: optimizeLegibility;
 }
+
+/* Tabular numerals for stats, tables, prices */
+.tabular,
+[data-tabular] {
+  font-variant-numeric: tabular-nums;
+}
+
+/* Monospace contexts */
+.mono,
+code,
+kbd,
+samp {
+  font-family: var(--font-mono);
+}
+
+/* Focus ring — consistent across every interactive element */
+*:focus-visible {
+  outline: 2px solid var(--color-accent);
+  outline-offset: 2px;
+  border-radius: var(--radius-sm);
+}
+
+/* Hide scrollbar but keep functionality (for horizontal date strips, chip rails) */
+.scrollbar-none::-webkit-scrollbar { display: none; }
+.scrollbar-none { -ms-overflow-style: none; scrollbar-width: none; }
+
+/* Hairline divider used in tables/cards */
+.hairline { border-color: var(--color-border-subtle); }
+
+/* Subtle dotted separator for sidebar nav groups */
+.dot-separator {
+  background-image: radial-gradient(circle, var(--color-border-strong) 1px, transparent 1px);
+  background-size: 1px 6px;
+  background-repeat: repeat-y;
+  background-position: center;
+}
+
+/* Smooth theme transition on root surfaces only (not every element — that's expensive) */
+body,
+[data-themed] {
+  transition: background-color 200ms ease, color 200ms ease, border-color 200ms ease;
+}
+
+/* Scrollable area niceties */
+.scroll-area {
+  scrollbar-width: thin;
+  scrollbar-color: var(--color-border-strong) transparent;
+}
+.scroll-area::-webkit-scrollbar { width: 8px; height: 8px; }
+.scroll-area::-webkit-scrollbar-thumb {
+  background: var(--color-border-strong);
+  border-radius: 999px;
+}
+.scroll-area::-webkit-scrollbar-track { background: transparent; }

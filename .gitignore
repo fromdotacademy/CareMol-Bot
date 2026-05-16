@@ -13,3 +13,6 @@ playwright-report/
 .playwright-mcp/
 tests/auth/*.json
 dashboard-full.png
+
+# Claude Code local settings (per-machine permissions + worktree state)
+.claude/

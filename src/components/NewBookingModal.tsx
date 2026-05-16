@@ -340,12 +340,15 @@ export function NewBookingModal({ staffRole, staffName, onClose }: NewBookingMod
   }
 
   return (
-    <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4">
-      <div className="bg-white rounded-2xl max-w-2xl w-full max-h-[90vh] flex flex-col overflow-hidden">
-        <header className="p-5 border-b border-border-subtle flex items-center justify-between">
-          <div>
-            <h3 className="font-bold text-text-dark">New Booking</h3>
-            <p className="text-xs text-text-muted">
+    <div className="fixed inset-0 bg-[var(--color-overlay)] backdrop-blur-[2px] z-[90] flex items-end sm:items-center justify-center p-0 sm:p-4" role="dialog" aria-modal="true">
+      <div className="bg-[var(--color-surface)] rounded-t-[var(--radius-xl-2)] sm:rounded-[var(--radius-lg)] border-t sm:border border-[var(--color-border-subtle)] shadow-[var(--shadow-lg)] sm:max-w-2xl w-full max-h-[94vh] sm:max-h-[90vh] flex flex-col overflow-hidden">
+        <div className="flex sm:hidden justify-center pt-2.5 pb-1" aria-hidden>
+          <span className="h-1 w-9 rounded-full bg-[var(--color-border-strong)]" />
+        </div>
+        <header className="px-4 sm:px-5 py-3.5 sm:py-4 border-b border-[var(--color-border-subtle)] flex items-center justify-between gap-3">
+          <div className="min-w-0">
+            <h3 className="text-[16px] font-semibold tracking-tight text-[var(--color-text-primary)]">New Booking</h3>
+            <p className="text-[12.5px] text-[var(--color-text-secondary)]">
               Manual booking — customer will receive a WhatsApp confirmation
             </p>
           </div>
@@ -373,7 +376,7 @@ export function NewBookingModal({ staffRole, staffName, onClose }: NewBookingMod
             </div>
             {existingPatients.length > 0 && (
               <div className="mt-3 border border-border-subtle rounded-lg overflow-hidden">
-                <div className="bg-slate-50 px-3 py-2 text-[10px] font-bold uppercase tracking-wider text-text-muted">
+                <div className="bg-[var(--color-sunken)] px-3 py-2 text-[10.5px] font-medium uppercase tracking-[0.06em] text-[var(--color-text-secondary)]">
                   Returning customer — pick a saved patient or add new
                 </div>
                 <div className="divide-y divide-border-subtle">
@@ -382,7 +385,7 @@ export function NewBookingModal({ staffRole, staffName, onClose }: NewBookingMod
                       key={p.id}
                       onClick={() => selectExisting(p)}
                       className={cn(
-                        "w-full text-left px-3 py-2 text-sm hover:bg-slate-50 flex items-center justify-between",
+                        "w-full text-left px-3 py-2 text-sm hover:bg-[var(--color-sunken)] flex items-center justify-between",
                         selectedPatientId === p.id && "bg-primary/5"
                       )}
                     >
@@ -397,7 +400,7 @@ export function NewBookingModal({ staffRole, staffName, onClose }: NewBookingMod
                   ))}
                   <button
                     onClick={startNewPatient}
-                    className="w-full text-left px-3 py-2 text-sm text-primary hover:bg-slate-50"
+                    className="w-full text-left px-3 py-2 text-sm text-primary hover:bg-[var(--color-sunken)]"
                   >
                     + Add new patient instead
                   </button>
@@ -437,7 +440,7 @@ export function NewBookingModal({ staffRole, staffName, onClose }: NewBookingMod
                         "flex-1 px-3 py-2 rounded-lg text-xs font-bold border",
                         patientGender === g
                           ? "border-primary bg-primary/5 text-primary"
-                          : "border-border-subtle text-text-muted hover:bg-slate-50"
+                          : "border-border-subtle text-text-muted hover:bg-[var(--color-sunken)]"
                       )}
                     >
                       {g}
@@ -455,7 +458,7 @@ export function NewBookingModal({ staffRole, staffName, onClose }: NewBookingMod
                         "flex-1 px-3 py-2 rounded-lg text-xs font-bold border",
                         language === l
                           ? "border-primary bg-primary/5 text-primary"
-                          : "border-border-subtle text-text-muted hover:bg-slate-50"
+                          : "border-border-subtle text-text-muted hover:bg-[var(--color-sunken)]"
                       )}
                     >
                       {l === "en" ? "English" : "മലയാളം"}
@@ -494,7 +497,7 @@ export function NewBookingModal({ staffRole, staffName, onClose }: NewBookingMod
                     onClick={() => togglePackage(pkg)}
                     className={cn(
                       "text-left px-3 py-2 rounded-lg border transition",
-                      on ? "border-primary bg-primary/5" : "border-border-subtle hover:bg-slate-50"
+                      on ? "border-primary bg-primary/5" : "border-border-subtle hover:bg-[var(--color-sunken)]"
                     )}
                   >
                     <div className="flex items-center justify-between">
@@ -516,7 +519,7 @@ export function NewBookingModal({ staffRole, staffName, onClose }: NewBookingMod
                   <button
                     key={pkg.id}
                     onClick={() => togglePackage(pkg)}
-                    className="px-3 py-1.5 rounded-lg border border-border-subtle text-xs hover:bg-slate-50"
+                    className="px-3 py-1.5 rounded-lg border border-border-subtle text-xs hover:bg-[var(--color-sunken)]"
                   >
                     + {pkg.name_en} (₹{pkg.priceRange?.[0]}–{pkg.priceRange?.[1]})
                   </button>
@@ -576,7 +579,7 @@ export function NewBookingModal({ staffRole, staffName, onClose }: NewBookingMod
           </Section>
 
           {/* Total preview */}
-          <div className="bg-slate-50 border border-border-subtle rounded-lg p-3 text-sm">
+          <div className="bg-[var(--color-sunken)] border border-[var(--color-border-subtle)] rounded-lg p-3 text-sm">
             <div className="flex justify-between">
               <span className="text-text-muted">Packages</span>
               <span>₹{packagesSubtotal}</span>
@@ -608,7 +611,7 @@ export function NewBookingModal({ staffRole, staffName, onClose }: NewBookingMod
                     "px-3 py-1.5 rounded-lg text-xs font-bold border",
                     bookingDate === d
                       ? "border-primary bg-primary/5 text-primary"
-                      : "border-border-subtle text-text-muted hover:bg-slate-50"
+                      : "border-border-subtle text-text-muted hover:bg-[var(--color-sunken)]"
                   )}
                 >
                   {formatDateLabel(d, language)}
@@ -627,7 +630,7 @@ export function NewBookingModal({ staffRole, staffName, onClose }: NewBookingMod
                     "px-3 py-1.5 rounded-lg text-xs font-bold border",
                     slotStart === s.start
                       ? "border-primary bg-primary/5 text-primary"
-                      : "border-border-subtle text-text-muted hover:bg-slate-50"
+                      : "border-border-subtle text-text-muted hover:bg-[var(--color-sunken)]"
                   )}
                 >
                   {formatSlotLabel(s, language)}
@@ -666,7 +669,7 @@ export function NewBookingModal({ staffRole, staffName, onClose }: NewBookingMod
                       "flex-1 px-3 py-2 rounded-lg text-xs font-bold border",
                       paymentMethod === m
                         ? "border-primary bg-primary/5 text-primary"
-                        : "border-border-subtle text-text-muted hover:bg-slate-50"
+                        : "border-border-subtle text-text-muted hover:bg-[var(--color-sunken)]"
                     )}
                   >
                     {m === "Cash" ? "Cash on Collection" : "UPI"}
@@ -762,15 +765,18 @@ function SuccessView({
     .join(", ");
 
   return (
-    <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4">
-      <div className="bg-white rounded-2xl max-w-lg w-full max-h-[90vh] flex flex-col overflow-hidden print:shadow-none">
-        <header className="p-5 border-b border-border-subtle flex items-center justify-between">
+    <div className="fixed inset-0 bg-[var(--color-overlay)] backdrop-blur-[2px] z-[90] flex items-end sm:items-center justify-center p-0 sm:p-4" role="dialog" aria-modal="true">
+      <div className="bg-[var(--color-surface)] rounded-t-[var(--radius-xl-2)] sm:rounded-[var(--radius-lg)] border-t sm:border border-[var(--color-border-subtle)] shadow-[var(--shadow-lg)] sm:max-w-lg w-full max-h-[94vh] sm:max-h-[90vh] flex flex-col overflow-hidden print:shadow-none">
+        <div className="flex sm:hidden justify-center pt-2.5 pb-1" aria-hidden>
+          <span className="h-1 w-9 rounded-full bg-[var(--color-border-strong)]" />
+        </div>
+        <header className="px-4 sm:px-5 py-3.5 sm:py-4 border-b border-[var(--color-border-subtle)] flex items-center justify-between gap-3">
           <div className="flex items-center gap-2">
-            <CheckCircle2 className="w-5 h-5 text-green-500" />
-            <h3 className="font-bold text-text-dark">Booking confirmed</h3>
+            <CheckCircle2 className="w-5 h-5 text-[var(--color-status-completed)]" />
+            <h3 className="text-[16px] font-semibold tracking-tight text-[var(--color-text-primary)]">Booking confirmed</h3>
           </div>
-          <button onClick={onClose} className="text-text-muted hover:text-text-dark print:hidden">
-            <X className="w-5 h-5" />
+          <button onClick={onClose} className="p-1.5 rounded-[var(--radius-sm)] text-[var(--color-text-tertiary)] hover:text-[var(--color-text-primary)] hover:bg-[var(--color-sunken)] transition-colors print:hidden" aria-label="Close">
+            <X className="w-4 h-4" />
           </button>
         </header>
 

@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef, useMemo } from 'react';
+﻿import React, { useState, useEffect, useRef, useMemo } from 'react';
 import {
   Phone,
   LayoutDashboard,
@@ -99,84 +99,9 @@ import {
   bookableDates,
 } from './services/slotService';
 
-// --- ROLE DETECTION ---
-//
-// Resolution order:
-//   1. Hardcoded bootstrap admins (mirrors firestore.rules.isHardcodedAdmin) so
-//      access cannot be lost if the staff collection is wiped.
-//   2. staff/{uid} record with role + active flag.
-//   3. Otherwise: customer (sees the WhatsApp simulator only).
-// HARDCODED_ADMIN_EMAILS now lives in ./lib/adminEmails so the server can share it.
-
-type ResolvedRole = StaffRole | 'customer';
-
-function useStaffRole(user: FirebaseUser | null): { role: ResolvedRole | null; loading: boolean } {
-  const [role, setRole] = useState<ResolvedRole | null>(null);
-  const [loading, setLoading] = useState(true);
-
-  useEffect(() => {
-    if (!user) {
-      setRole(null);
-      setLoading(false);
-      return;
-    }
-    setLoading(true);
-    if (user.email && HARDCODED_ADMIN_EMAILS.has(user.email)) {
-      setRole('admin');
-      setLoading(false);
-      return;
-    }
-    const ref = doc(db, 'staff', user.uid);
-    return onSnapshot(
-      ref,
-      (snap) => {
-        if (snap.exists()) {
-          const data = snap.data() as Staff;
-          setRole(data.active === false ? 'customer' : data.role);
-        } else {
-          setRole('customer');
-        }
-        setLoading(false);
-      },
-      () => {
-        setRole('customer');
-        setLoading(false);
-      }
-    );
-  }, [user]);
-
-  return { role, loading };
-}
-
-// --- BOOKING CONFIG ---
-//
-// Subscribes to the singleton config/booking doc with the slot template and
-// max-advance window. Falls back to defaultBookingConfig() if absent so the
-// UI still renders. Also populates the in-memory cache in slotService so any
-// non-React caller in this process sees fresh values.
-function useBookingConfig(): BookingConfig {
-  const [config, setConfig] = useState<BookingConfig>(defaultBookingConfig());
-  useEffect(() => {
-    const ref = doc(db, 'config', 'booking');
-    return onSnapshot(
-      ref,
-      (snap) => {
-        if (snap.exists()) {
-          const data = snap.data() as Partial<BookingConfig>;
-          const merged: BookingConfig = { ...defaultBookingConfig(), ...data };
-          setConfig(merged);
-          rememberBookingConfig(merged);
-        } else {
-          setConfig(defaultBookingConfig());
-        }
-      },
-      () => {
-        // Permission denied or other read error — keep the fallback config.
-      }
-    );
-  }, []);
-  return config;
-}
+import { useStaffRole } from './hooks/useStaffRole';
+import { useBookingConfig } from './hooks/useBookingConfig';
+import { StatCard as UiStatCard } from './ui/StatCard';
 
 // --- Firestore Error Handling ---
 
@@ -233,7 +158,7 @@ function handleFirestoreError(error: unknown, operationType: OperationType, path
 
 // --- ERROR BOUNDARY ---
 
-function ErrorFallback({ error }: { error: Error }) {
+export function ErrorFallback({ error }: { error: Error }) {
   let details: FirestoreErrorInfo | null = null;
   try {
     details = JSON.parse(error.message);
@@ -260,411 +185,11 @@ function ErrorFallback({ error }: { error: Error }) {
   );
 }
 
-// --- MAIN APP COMPONENT ---
-
-export default function App() {
-  const [view, setView] = useState<'dashboard' | 'simulator'>('dashboard');
-  const [user, setUser] = useState<FirebaseUser | null>(null);
-  const [isAuthReady, setIsAuthReady] = useState(false);
-  const [dbError, setDbError] = useState<Error | null>(null);
-  const { role, loading: roleLoading } = useStaffRole(user);
-
-  useEffect(() => {
-    // Connection test
-    const testConnection = async () => {
-      try {
-        await getDocFromServer(doc(db, 'test', 'connection'));
-      } catch (error: any) {
-        if(error instanceof Error && error.message.includes('the client is offline')) {
-          console.error("Please check your Firebase configuration. The client is offline.");
-        }
-      }
-    };
-    testConnection();
-
-    onAuthStateChanged(auth, (u) => {
-      setUser(u);
-      setIsAuthReady(true);
-    });
-  }, []);
-
-  const [loginError, setLoginError] = React.useState<string | null>(null);
-  const [loginInfo, setLoginInfo] = React.useState<string | null>(null);
-  const [emailInput, setEmailInput] = React.useState('');
-  const [passwordInput, setPasswordInput] = React.useState('');
-  const [emailLoginBusy, setEmailLoginBusy] = React.useState(false);
-
-  const loginWithGoogle = async () => {
-    setLoginError(null);
-    setLoginInfo(null);
-    try {
-      const provider = new GoogleAuthProvider();
-      await signInWithPopup(auth, provider);
-    } catch (e: any) {
-      console.error(e);
-      setLoginError(e?.message || String(e));
-    }
-  };
-
-  const loginWithEmail = async () => {
-    setLoginError(null);
-    setLoginInfo(null);
-    if (!emailInput.trim() || !passwordInput) {
-      setLoginError('Enter your email and password.');
-      return;
-    }
-    setEmailLoginBusy(true);
-    try {
-      await signInWithEmailAndPassword(auth, emailInput.trim(), passwordInput);
-    } catch (e: any) {
-      console.error(e);
-      setLoginError(e?.message || String(e));
-    } finally {
-      setEmailLoginBusy(false);
-    }
-  };
-
-  const handleForgotPassword = async () => {
-    setLoginError(null);
-    setLoginInfo(null);
-    if (!emailInput.trim()) {
-      setLoginError('Enter your email first, then click "Forgot password?".');
-      return;
-    }
-    try {
-      await sendPasswordResetEmail(auth, emailInput.trim());
-      setLoginInfo('Password reset email sent. Check your inbox.');
-    } catch (e: any) {
-      console.error(e);
-      setLoginError(e?.message || String(e));
-    }
-  };
-
-  const logout = async () => {
-    try {
-      await signOut(auth);
-    } catch (e) {
-      console.error(e);
-    }
-  };
-
-  const [showChangePassword, setShowChangePassword] = React.useState(false);
-  const [newPassword, setNewPassword] = React.useState('');
-  const [confirmPassword, setConfirmPassword] = React.useState('');
-  const [pwBusy, setPwBusy] = React.useState(false);
-  const [pwError, setPwError] = React.useState<string | null>(null);
-  const [pwSuccess, setPwSuccess] = React.useState<string | null>(null);
-
-  const isPasswordUser = !!user?.providerData?.some(p => p.providerId === 'password');
-
-  const submitChangePassword = async () => {
-    setPwError(null);
-    setPwSuccess(null);
-    if (newPassword.length < 6) {
-      setPwError('Password must be at least 6 characters.');
-      return;
-    }
-    if (newPassword !== confirmPassword) {
-      setPwError('Passwords do not match.');
-      return;
-    }
-    if (!auth.currentUser) {
-      setPwError('Not signed in.');
-      return;
-    }
-    setPwBusy(true);
-    try {
-      await updatePassword(auth.currentUser, newPassword);
-      setPwSuccess('Password updated.');
-      setNewPassword('');
-      setConfirmPassword('');
-      setTimeout(() => {
-        setShowChangePassword(false);
-        setPwSuccess(null);
-      }, 1500);
-    } catch (e: any) {
-      if (e?.code === 'auth/requires-recent-login' && auth.currentUser?.email) {
-        try {
-          await sendPasswordResetEmail(auth, auth.currentUser.email);
-          setPwError('For security, please sign in again. A reset link has been sent to your email.');
-        } catch (e2: any) {
-          setPwError(e?.message || String(e));
-        }
-      } else {
-        setPwError(e?.message || String(e));
-      }
-    } finally {
-      setPwBusy(false);
-    }
-  };
-
-  if (dbError) return <ErrorFallback error={dbError} />;
-
-  if (!isAuthReady) return (
-    <div className="h-screen w-screen flex items-center justify-center bg-[#F8FAFC]">
-      <motion.div 
-        animate={{ rotate: 360 }}
-        transition={{ duration: 1, repeat: Infinity, ease: "linear" }}
-      >
-        <RefreshCw className="w-8 h-8 text-blue-600" />
-      </motion.div>
-    </div>
-  );
-
-  return (
-    <div className="h-screen w-screen bg-bg-app p-6 flex items-center justify-center overflow-hidden font-sans">
-      <div className="w-full max-w-7xl h-full flex gap-6">
-        
-        {!user ? (
-          <div className="flex-1 flex flex-col items-center justify-center bg-white rounded-xl-2 border border-border-subtle p-12 text-center shadow-xl">
-            <div className="w-20 h-20 bg-primary/10 rounded-3xl flex items-center justify-center text-primary mb-8">
-              <LogIn className="w-10 h-10" />
-            </div>
-            <h2 className="text-3xl font-black text-text-dark mb-4 tracking-tight">Access Secure Dashboard</h2>
-            <p className="text-text-muted mb-8 max-w-md text-lg">Experience real-time sample collection management and chatbot simulation.</p>
-
-            <button
-              onClick={loginWithGoogle}
-              className="bg-primary text-white px-10 py-4 rounded-2xl font-bold flex items-center gap-4 hover:opacity-90 transition-opacity shadow-2xl shadow-primary/30"
-            >
-              <img src="https://www.gstatic.com/firebasejs/ui/2.0.0/images/auth/google.svg" className="w-6 h-6 bg-white p-0.5 rounded" alt="Google" />
-              Sign in with Google
-            </button>
-            <p className="mt-2 text-[10px] uppercase tracking-widest font-bold text-text-muted">For admins</p>
-
-            <div className="flex items-center w-full max-w-sm my-6">
-              <div className="flex-1 h-px bg-border-subtle" />
-              <span className="px-3 text-xs text-text-muted uppercase tracking-widest">or</span>
-              <div className="flex-1 h-px bg-border-subtle" />
-            </div>
-
-            <div className="w-full max-w-sm space-y-2 text-left">
-              <p className="text-[10px] uppercase tracking-widest font-bold text-text-muted text-center mb-1">For staff</p>
-              <input
-                type="email"
-                placeholder="Email"
-                value={emailInput}
-                onChange={(e) => setEmailInput(e.target.value)}
-                className="w-full px-4 py-3 border border-border-subtle rounded-xl text-sm outline-none focus:border-primary"
-                autoComplete="username"
-              />
-              <input
-                type="password"
-                placeholder="Password"
-                value={passwordInput}
-                onChange={(e) => setPasswordInput(e.target.value)}
-                onKeyDown={(e) => { if (e.key === 'Enter') loginWithEmail(); }}
-                className="w-full px-4 py-3 border border-border-subtle rounded-xl text-sm outline-none focus:border-primary"
-                autoComplete="current-password"
-              />
-              <button
-                onClick={loginWithEmail}
-                disabled={emailLoginBusy}
-                className="w-full bg-slate-800 text-white px-6 py-3 rounded-xl font-bold hover:opacity-90 transition-opacity disabled:opacity-50"
-              >
-                {emailLoginBusy ? 'Signing in…' : 'Sign In'}
-              </button>
-              <button
-                onClick={handleForgotPassword}
-                type="button"
-                className="w-full text-xs text-primary underline pt-1"
-              >
-                Forgot password?
-              </button>
-            </div>
-
-            {loginInfo && (
-              <p className="mt-4 text-green-700 text-sm bg-green-50 border border-green-200 rounded-xl px-4 py-3 max-w-md text-left break-all">{loginInfo}</p>
-            )}
-            {loginError && (
-              <p className="mt-4 text-red-600 text-sm bg-red-50 border border-red-200 rounded-xl px-4 py-3 max-w-md text-left break-all">{loginError}</p>
-            )}
-          </div>
-        ) : (
-          <>
-            {/* Phone Column - Always Visible */}
-            <div className="hidden lg:flex flex-col items-center justify-center w-[340px] shrink-0">
-              <WhatsAppSimulator userId={user.uid} />
-              <p className="mt-4 text-xs font-semibold text-text-muted uppercase tracking-widest">User Interface: WhatsApp Chatbot</p>
-            </div>
-
-            {/* Dashboard Column */}
-            <div className="flex-1 bg-white rounded-xl-2 border border-border-subtle flex flex-col shadow-sm overflow-hidden">
-              {/* Header */}
-              <header className="p-8 border-b border-border-subtle flex items-center justify-between shrink-0">
-                <div>
-                  <h1 className="text-2xl font-bold text-primary">
-                    {role === 'phlebotomist' ? 'CareMol Phlebotomist' : 'CareMol Admin'}
-                  </h1>
-                  <p className="text-sm text-text-muted">Home Sample Collection | Melattur Center</p>
-                </div>
-
-                <div className="flex items-center gap-6">
-                  <div className="text-right">
-                    <p className="text-sm font-bold text-text-dark">{format(new Date(), 'MMM dd, yyyy')}</p>
-                    <p className="text-[10px] text-text-muted font-bold uppercase tracking-wider">Last updated: {format(new Date(), 'HH:mm aa')}</p>
-                  </div>
-                  <div className="flex items-center gap-3 pr-4 border-r border-border-subtle">
-                    <div className="w-10 h-10 rounded-full bg-slate-100 flex items-center justify-center border border-border-subtle overflow-hidden">
-                      {user.photoURL ? <img src={user.photoURL} alt="" referrerPolicy="no-referrer" /> : <User className="w-5 h-5 text-primary" />}
-                    </div>
-                    {isPasswordUser && (
-                      <button
-                        onClick={() => { setShowChangePassword(true); setPwError(null); setPwSuccess(null); }}
-                        className="text-text-muted hover:text-primary transition-colors text-[10px] font-bold uppercase tracking-widest"
-                        title="Change password"
-                      >
-                        Change PW
-                      </button>
-                    )}
-                    <button onClick={logout} className="text-text-muted hover:text-red-500 transition-colors">
-                      <LogOut className="w-4 h-4" />
-                    </button>
-                  </div>
-                  
-                  <button 
-                    onClick={() => setView(view === 'dashboard' ? 'simulator' : 'dashboard')}
-                    className="lg:hidden p-2 bg-slate-100 rounded-lg text-primary border border-border-subtle"
-                  >
-                    {view === 'dashboard' ? <MessageSquare className="w-5 h-5" /> : <LayoutDashboard className="w-5 h-5" />}
-                  </button>
-                </div>
-              </header>
-
-              <div className="flex-1 overflow-auto p-8">
-                <AnimatePresence mode="wait">
-                  {view === 'dashboard' || window.innerWidth >= 1024 ? (
-                    roleLoading ? (
-                      <motion.div
-                        key="role-loading"
-                        initial={{ opacity: 0 }}
-                        animate={{ opacity: 1 }}
-                        exit={{ opacity: 0 }}
-                        className="h-full flex items-center justify-center"
-                      >
-                        <RefreshCw className="w-6 h-6 text-blue-600 animate-spin" />
-                      </motion.div>
-                    ) : role === 'admin' ? (
-                      <motion.div
-                        key="dashboard"
-                        initial={{ opacity: 0 }}
-                        animate={{ opacity: 1 }}
-                        exit={{ opacity: 0 }}
-                      >
-                        <DashboardView onError={(err) => setDbError(err)} />
-                      </motion.div>
-                    ) : role === 'phlebotomist' ? (
-                      <motion.div
-                        key="phleb"
-                        initial={{ opacity: 0 }}
-                        animate={{ opacity: 1 }}
-                        exit={{ opacity: 0 }}
-                      >
-                        <PhlebotomistDashboard
-                          user={user}
-                          onError={(err) => setDbError(err)}
-                        />
-                      </motion.div>
-                    ) : (
-                      <motion.div
-                        key="no-admin"
-                        initial={{ opacity: 0 }}
-                        animate={{ opacity: 1 }}
-                        exit={{ opacity: 0 }}
-                        className="h-full flex flex-col items-center justify-center text-center p-8"
-                      >
-                        <AlertTriangle className="w-12 h-12 text-orange-500 mb-4" />
-                        <h3 className="text-xl font-bold text-text-dark mb-2">Staff Access Required</h3>
-                        <p className="text-text-muted">The dashboard is reserved for authorized staff. Please use the WhatsApp simulator to book tests.</p>
-                      </motion.div>
-                    )
-                  ) : (
-                    <motion.div
-                      key="simulator"
-                      initial={{ opacity: 0 }}
-                      animate={{ opacity: 1 }}
-                      exit={{ opacity: 0 }}
-                      className="flex items-center justify-center py-4"
-                    >
-                      <WhatsAppSimulator userId={user.uid} />
-                    </motion.div>
-                  )}
-                </AnimatePresence>
-              </div>
-
-              <footer className="px-8 py-4 border-t border-border-subtle flex items-center justify-between text-[10px] text-text-muted font-bold uppercase tracking-widest">
-                <div>System ID: MLT-004</div>
-                <div>User: {user.email}</div>
-              </footer>
-            </div>
-          </>
-        )}
-      </div>
-
-      {showChangePassword && (
-        <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4">
-          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-md p-6 space-y-4">
-            <div className="flex items-center justify-between">
-              <h3 className="text-lg font-bold text-text-dark">Change Password</h3>
-              <button
-                onClick={() => { setShowChangePassword(false); setNewPassword(''); setConfirmPassword(''); setPwError(null); setPwSuccess(null); }}
-                className="text-text-muted hover:text-text-dark"
-                aria-label="Close"
-              >
-                ✕
-              </button>
-            </div>
-            <p className="text-xs text-text-muted">
-              Choose a new password (at least 6 characters). You may be asked to sign in again for security.
-            </p>
-            <input
-              type="password"
-              placeholder="New password"
-              value={newPassword}
-              onChange={(e) => setNewPassword(e.target.value)}
-              className="w-full px-4 py-3 border border-border-subtle rounded-xl text-sm outline-none focus:border-primary"
-              autoComplete="new-password"
-            />
-            <input
-              type="password"
-              placeholder="Confirm new password"
-              value={confirmPassword}
-              onChange={(e) => setConfirmPassword(e.target.value)}
-              onKeyDown={(e) => { if (e.key === 'Enter') submitChangePassword(); }}
-              className="w-full px-4 py-3 border border-border-subtle rounded-xl text-sm outline-none focus:border-primary"
-              autoComplete="new-password"
-            />
-            {pwError && (
-              <p className="text-red-600 text-sm bg-red-50 border border-red-200 rounded-xl px-3 py-2 break-all">{pwError}</p>
-            )}
-            {pwSuccess && (
-              <p className="text-green-700 text-sm bg-green-50 border border-green-200 rounded-xl px-3 py-2 break-all">{pwSuccess}</p>
-            )}
-            <div className="flex justify-end gap-2">
-              <button
-                onClick={() => { setShowChangePassword(false); setNewPassword(''); setConfirmPassword(''); setPwError(null); setPwSuccess(null); }}
-                className="px-4 py-2 text-text-muted text-sm font-bold hover:text-text-dark"
-              >
-                Cancel
-              </button>
-              <button
-                onClick={submitChangePassword}
-                disabled={pwBusy}
-                className="px-4 py-2 bg-primary text-white text-sm font-bold rounded-xl hover:opacity-90 disabled:opacity-50"
-              >
-                {pwBusy ? 'Updating…' : 'Update Password'}
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-    </div>
-  );
-}
-
 // --- DASHBOARD VIEW ---
 
-function DashboardView({ onError }: { onError: (err: Error) => void }) {
+export type AdminTab = 'bookings' | 'patients' | 'staff' | 'schedule' | 'settings';
+
+export function DashboardView({ tab: tabProp, onTabChange, onError }: { tab?: AdminTab; onTabChange?: (t: AdminTab) => void; onError: (err: Error) => void }) {
   const [bookings, setBookings] = useState<Booking[]>([]);
   const [patients, setPatients] = useState<PatientProfile[]>([]);
   const [staff, setStaff] = useState<Staff[]>([]);
@@ -672,7 +197,12 @@ function DashboardView({ onError }: { onError: (err: Error) => void }) {
   const [filter, setFilter] = useState<BookingStatus | 'All'>('All');
   const [dateFilter, setDateFilter] = useState<'upcoming' | 'all'>('upcoming');
   const [searchTerm, setSearchTerm] = useState('');
-  const [tab, setTab] = useState<'bookings' | 'patients' | 'staff' | 'schedule' | 'settings'>('bookings');
+  const [internalTab, setInternalTab] = useState<AdminTab>(tabProp ?? 'bookings');
+  const tab: AdminTab = tabProp ?? internalTab;
+  const setTab = (next: AdminTab) => {
+    if (onTabChange) onTabChange(next);
+    else setInternalTab(next);
+  };
   const [selectedPatientId, setSelectedPatientId] = useState<string | null>(null);
   const [editingBookingId, setEditingBookingId] = useState<string | null>(null);
   const [overrideForBooking, setOverrideForBooking] = useState<Set<string>>(new Set());
@@ -879,51 +409,82 @@ function DashboardView({ onError }: { onError: (err: Error) => void }) {
   };
 
   return (
-    <div className="space-y-8">
+    <div className="space-y-6 sm:space-y-7">
+      {/* Header row — page name + primary action */}
+      {tabProp !== undefined && (
+        <div className="flex items-end justify-between gap-3">
+          <div className="min-w-0">
+            <h1 className="text-[22px] sm:text-[26px] font-semibold tracking-tight leading-[1.2] text-[var(--color-text-primary)] capitalize">
+              {tab}
+            </h1>
+            <p className="mt-0.5 text-[13px] text-[var(--color-text-secondary)]">
+              {tab === 'bookings' && `${stats.total} total · ${stats.pending} need action`}
+              {tab === 'patients' && `${patients.length} patients in directory`}
+              {tab === 'staff' && `${staff.length} staff members`}
+              {tab === 'schedule' && 'Per-phlebotomist availability'}
+              {tab === 'settings' && 'Booking template, service area, and account'}
+            </p>
+          </div>
+          <button
+            onClick={() => setNewBookingOpen(true)}
+            className="inline-flex items-center gap-1.5 h-10 px-3.5 sm:px-4 rounded-[var(--radius-md)] bg-[var(--color-accent)] text-white text-[13px] font-medium tracking-tight hover:bg-[var(--color-accent-hover)] transition-colors shrink-0"
+          >
+            <Plus className="w-4 h-4" />
+            <span className="hidden sm:inline">New Booking</span>
+            <span className="sm:hidden">New</span>
+          </button>
+        </div>
+      )}
+
       {/* KPI Top Bar */}
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+      <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 sm:gap-4">
         <StatCard title="Total Revenue" value={`₹${stats.revenue.toLocaleString()}`} icon={<TrendingUp className="w-5 h-5 text-emerald-500" />} />
         <StatCard title="Action Needed" value={stats.pending} icon={<AlertTriangle className="w-5 h-5 text-amber-500" />} />
         <StatCard title="Samples in Transit" value={stats.inTransit} icon={<Clock className="w-5 h-5 text-blue-500" />} />
         <StatCard title="Completed Today" value={stats.completed} icon={<CheckCircle2 className="w-5 h-5 text-green-500" />} />
       </div>
 
-      {/* Primary action — always visible, regardless of active tab. */}
-      <div className="flex items-center justify-end">
-        <button
-          onClick={() => setNewBookingOpen(true)}
-          className="px-4 py-2 text-xs font-bold uppercase tracking-wider rounded-lg bg-primary text-white hover:opacity-90 shadow-sm flex items-center gap-2"
-        >
-          <Plus className="w-4 h-4" />
-          New Booking
-        </button>
-      </div>
-
-      {/* Tab Toggle */}
-      <div className="flex items-center gap-1 border-b border-border-subtle overflow-x-auto">
-        {(['bookings', 'patients', 'staff', 'schedule', 'settings'] as const).map(t => (
+      {/* Primary action — only shown when used standalone (legacy mode, no tabProp). */}
+      {tabProp === undefined && (
+        <div className="flex items-center justify-end">
           <button
-            key={t}
-            onClick={() => setTab(t)}
-            className={cn(
-              "px-4 py-2 text-xs font-bold uppercase tracking-wider border-b-2 transition-colors -mb-px whitespace-nowrap",
-              tab === t
-                ? "text-primary border-primary"
-                : "text-text-muted border-transparent hover:text-text-dark"
-            )}
+            onClick={() => setNewBookingOpen(true)}
+            className="px-4 py-2 text-xs font-bold uppercase tracking-wider rounded-lg bg-primary text-white hover:opacity-90 shadow-sm flex items-center gap-2"
           >
-            {t === 'bookings'
-              ? `Bookings (${bookings.length})`
-              : t === 'patients'
-                ? `Patients (${patients.length})`
-                : t === 'staff'
-                  ? `Staff (${staff.length})`
-                  : t === 'schedule'
-                    ? 'Schedule'
-                    : 'Settings'}
+            <Plus className="w-4 h-4" />
+            New Booking
           </button>
-        ))}
-      </div>
+        </div>
+      )}
+
+      {/* Internal tab bar — hidden when DashboardView is mounted under a URL route
+          (the sidebar/bottom-bar already provides navigation in that case). */}
+      {tabProp === undefined && (
+        <div className="flex items-center gap-1 border-b border-border-subtle overflow-x-auto">
+          {(['bookings', 'patients', 'staff', 'schedule', 'settings'] as const).map(t => (
+            <button
+              key={t}
+              onClick={() => setTab(t)}
+              className={cn(
+                "px-4 py-2 text-xs font-bold uppercase tracking-wider border-b-2 transition-colors -mb-px whitespace-nowrap",
+                tab === t
+                  ? "text-primary border-primary"
+                  : "text-text-muted border-transparent hover:text-text-dark"
+              )}
+            >
+              {t === 'bookings'
+                ? `Bookings (${bookings.length})`
+                : t === 'patients'
+                  ? `Patients (${patients.length})`
+                  : t === 'staff'
+                    ? `Staff (${staff.length})`
+                    : t === 'schedule'
+                      ? 'Schedule'
+                      : 'Settings'}
+            </button>
+          ))}
+        </div>
+      )}
 
       {tab === 'settings' ? (
         <SettingsView config={config} onError={onError} />
@@ -939,62 +500,62 @@ function DashboardView({ onError }: { onError: (err: Error) => void }) {
           onSelect={setSelectedPatientId}
         />
       ) : (
-      <div className="bg-white rounded-xl border border-border-subtle overflow-hidden">
+      <div className="bg-[var(--color-surface)] rounded-[var(--radius-lg)] border border-[var(--color-border-subtle)] overflow-hidden">
         {/* Toolbar */}
-        <div className="p-4 border-b border-border-subtle bg-slate-50/50 flex flex-col md:flex-row md:items-center justify-between gap-4">
-          <div className="flex bg-white border border-border-subtle rounded-lg px-3 py-1.5 focus-within:ring-2 ring-primary/20 transition-all items-center gap-2 max-w-sm w-full">
-            <Search className="w-4 h-4 text-text-muted" />
-            <input 
-              type="text" 
-              placeholder="Search patient name or phone..." 
+        <div className="p-3 sm:p-4 border-b border-[var(--color-border-subtle)] flex flex-col md:flex-row md:items-center justify-between gap-3">
+          <div className="flex items-center gap-2 bg-[var(--color-surface)] border border-[var(--color-border-strong)] rounded-[var(--radius-md)] h-10 px-3 focus-within:border-[var(--color-accent)] transition-colors max-w-sm w-full">
+            <Search className="w-4 h-4 text-[var(--color-text-tertiary)]" />
+            <input
+              type="text"
+              placeholder="Search patient name or phone…"
               value={searchTerm}
               onChange={(e) => setSearchTerm(e.target.value)}
-              className="bg-transparent border-none text-xs outline-none w-full text-text-dark"
+              className="bg-transparent border-none text-[13.5px] outline-none w-full text-[var(--color-text-primary)] placeholder:text-[var(--color-text-tertiary)]"
             />
           </div>
 
-          <div className="flex items-center gap-2 overflow-x-auto pb-1 md:pb-0">
+          <div className="flex items-center gap-1.5 overflow-x-auto pb-1 md:pb-0 scrollbar-none">
             {['All', 'Created', 'Assigned', 'Collected', 'Processing', 'Completed'].map(s => (
               <button
                 key={s}
                 onClick={() => setFilter(s as any)}
                 className={cn(
-                  "px-3 py-1.5 text-[10px] font-bold uppercase tracking-wider rounded-md border transition-all whitespace-nowrap",
+                  "h-8 px-3 text-[12px] font-medium tracking-tight rounded-[var(--radius-sm)] border transition-colors whitespace-nowrap",
                   filter === s
-                    ? "bg-primary text-white border-primary shadow-sm"
-                    : "bg-white text-text-muted border-border-subtle hover:bg-slate-50"
+                    ? "bg-[var(--color-accent)] text-white border-[var(--color-accent)]"
+                    : "bg-[var(--color-surface)] text-[var(--color-text-secondary)] border-[var(--color-border-subtle)] hover:bg-[var(--color-sunken)] hover:text-[var(--color-text-primary)]"
                 )}
               >
                 {s}
               </button>
             ))}
-            <div className="w-px h-5 bg-border-subtle mx-1" />
+            <div className="w-px h-5 bg-[var(--color-border-subtle)] mx-1" />
             <button
               onClick={() => setDateFilter(d => d === 'upcoming' ? 'all' : 'upcoming')}
               title={dateFilter === 'upcoming' ? 'Showing today + next ' + config.maxAdvanceDays + ' days. Click to show all.' : 'Showing all dates. Click to limit to upcoming.'}
               className={cn(
-                "px-3 py-1.5 text-[10px] font-bold uppercase tracking-wider rounded-md border transition-all whitespace-nowrap flex items-center gap-1",
+                "inline-flex items-center gap-1.5 h-8 px-3 text-[12px] font-medium tracking-tight rounded-[var(--radius-sm)] border transition-colors whitespace-nowrap",
                 dateFilter === 'upcoming'
-                  ? "bg-blue-100 text-blue-700 border-blue-200"
-                  : "bg-white text-text-muted border-border-subtle hover:bg-slate-50"
+                  ? "bg-[var(--color-status-assigned-bg)] text-[var(--color-status-assigned)] border-[var(--color-status-assigned-ring)]"
+                  : "bg-[var(--color-surface)] text-[var(--color-text-secondary)] border-[var(--color-border-subtle)] hover:bg-[var(--color-sunken)] hover:text-[var(--color-text-primary)]"
               )}
             >
-              <Calendar className="w-3 h-3" />
+              <Calendar className="w-3.5 h-3.5" />
               {dateFilter === 'upcoming' ? 'Upcoming' : 'All dates'}
             </button>
           </div>
         </div>
 
         {/* Enhanced Table */}
-        <div className="overflow-x-auto">
-          <table className="w-full border-collapse">
+        <div className="overflow-x-auto scroll-area">
+          <table className="w-full border-collapse min-w-[1024px]">
             <thead>
-              <tr className="bg-slate-50 border-b border-border-subtle">
-                <th className="text-left py-4 px-6 text-[10px] font-black text-text-muted uppercase tracking-widest">Patient Details</th>
-                <th className="text-left py-4 px-6 text-[10px] font-black text-text-muted uppercase tracking-widest">Test & Logistics</th>
-                <th className="text-left py-4 px-6 text-[10px] font-black text-text-muted uppercase tracking-widest">Revenue & Priority</th>
-                <th className="text-left py-4 px-6 text-[10px] font-black text-text-muted uppercase tracking-widest">Status Management</th>
-                <th className="text-right py-4 px-6 text-[10px] font-black text-text-muted uppercase tracking-widest">Actions</th>
+              <tr className="bg-[var(--color-sunken)] border-b border-[var(--color-border-subtle)]">
+                <th className="text-left py-2.5 px-4 sm:px-5 text-[11px] font-medium text-[var(--color-text-secondary)] uppercase tracking-[0.06em]">Patient</th>
+                <th className="text-left py-2.5 px-4 sm:px-5 text-[11px] font-medium text-[var(--color-text-secondary)] uppercase tracking-[0.06em]">Tests &amp; Logistics</th>
+                <th className="text-left py-2.5 px-4 sm:px-5 text-[11px] font-medium text-[var(--color-text-secondary)] uppercase tracking-[0.06em]">Revenue</th>
+                <th className="text-left py-2.5 px-4 sm:px-5 text-[11px] font-medium text-[var(--color-text-secondary)] uppercase tracking-[0.06em]">Status</th>
+                <th className="text-right py-2.5 px-4 sm:px-5 text-[11px] font-medium text-[var(--color-text-secondary)] uppercase tracking-[0.06em]">Actions</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-border-subtle">
@@ -1084,9 +645,14 @@ function DashboardView({ onError }: { onError: (err: Error) => void }) {
                         value={b.status}
                         onChange={(e) => updateStatus(b.bookingId, e.target.value as BookingStatus)}
                         className={cn(
-                          "text-[10px] font-black uppercase tracking-widest py-1.5 px-4 rounded-full border-none cursor-pointer outline-none shadow-sm transition-all",
+                          "text-[11px] font-medium tracking-tight py-1 pl-3 pr-7 rounded-full cursor-pointer outline-none transition-colors appearance-none",
+                          "bg-no-repeat bg-[right_0.5rem_center] bg-[length:10px]",
                           getStatusStyle(b.status)
                         )}
+                        style={{
+                          backgroundImage:
+                            "url(\"data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='2.4' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpolyline points='6 9 12 15 18 9'/%3E%3C/svg%3E\")",
+                        }}
                       >
                         <option value="Created">Created</option>
                         <option value="Assigned">Assigned</option>
@@ -1147,7 +713,7 @@ function DashboardView({ onError }: { onError: (err: Error) => void }) {
                               </button>
                             )}
                             {b.assignedToName && b.assignedTo && !phlebotomists.find(p => p.uid === b.assignedTo) && (
-                              <div className="text-[9px] text-text-muted italic">→ {b.assignedToName} (inactive)</div>
+                              <div className="text-[9px] text-text-muted italic">â†’ {b.assignedToName} (inactive)</div>
                             )}
                           </>
                         );
@@ -1265,41 +831,43 @@ function PatientsView({
     : [];
 
   return (
-    <div className="bg-white rounded-xl border border-border-subtle overflow-hidden grid grid-cols-1 lg:grid-cols-[320px_1fr]">
+    <div className="bg-[var(--color-surface)] rounded-[var(--radius-lg)] border border-[var(--color-border-subtle)] overflow-hidden grid grid-cols-1 lg:grid-cols-[320px_1fr]">
       {/* List */}
-      <div className="border-r border-border-subtle">
-        <div className="p-3 border-b border-border-subtle bg-slate-50/50">
-          <div className="flex items-center gap-2 bg-white border border-border-subtle rounded-lg px-3 py-1.5">
-            <Search className="w-4 h-4 text-text-muted" />
+      <div className="border-b lg:border-b-0 lg:border-r border-[var(--color-border-subtle)]">
+        <div className="p-3 border-b border-[var(--color-border-subtle)]">
+          <div className="flex items-center gap-2 bg-[var(--color-surface)] border border-[var(--color-border-strong)] rounded-[var(--radius-md)] h-9 px-3 focus-within:border-[var(--color-accent)] transition-colors">
+            <Search className="w-4 h-4 text-[var(--color-text-tertiary)]" />
             <input
               type="text"
-              placeholder="Search patients..."
+              placeholder="Search patients…"
               value={search}
               onChange={(e) => setSearch(e.target.value)}
-              className="bg-transparent border-none text-xs outline-none w-full text-text-dark"
+              className="bg-transparent border-none text-[13px] outline-none w-full text-[var(--color-text-primary)] placeholder:text-[var(--color-text-tertiary)]"
             />
           </div>
         </div>
-        <div className="max-h-[60vh] overflow-auto divide-y divide-border-subtle">
+        <div className="max-h-[60vh] overflow-auto scroll-area divide-y divide-[var(--color-border-subtle)]">
           {filtered.length === 0 && (
-            <div className="p-6 text-center text-text-muted text-xs">No patients yet</div>
+            <div className="p-6 text-center text-[var(--color-text-tertiary)] text-[12.5px]">No patients yet</div>
           )}
           {filtered.map(p => (
             <button
               key={p.id}
               onClick={() => onSelect(p.id)}
               className={cn(
-                "w-full text-left px-4 py-3 hover:bg-primary/5 transition-colors flex items-center gap-3",
-                selectedPatientId === p.id && "bg-primary/10"
+                "w-full text-left px-3 sm:px-4 py-3 transition-colors flex items-center gap-3",
+                selectedPatientId === p.id
+                  ? "bg-[var(--color-accent-soft)]"
+                  : "hover:bg-[var(--color-sunken)]"
               )}
             >
-              <div className="w-9 h-9 rounded-full bg-slate-100 flex items-center justify-center border border-border-subtle">
-                <User className="w-4 h-4 text-primary" />
+              <div className="size-9 rounded-full bg-[var(--color-sunken)] flex items-center justify-center border border-[var(--color-border-subtle)] text-[var(--color-accent-hover)] shrink-0">
+                <User className="w-4 h-4" />
               </div>
               <div className="flex-1 min-w-0">
-                <div className="font-bold text-sm text-text-dark truncate">{p.name || 'Unnamed'}</div>
-                <div className="text-[10px] text-text-muted truncate">
-                  {p.phone || 'no phone'} · {p.age ? `${p.age} yrs` : '?'} · {p.gender || '—'}
+                <div className="font-medium text-[13.5px] tracking-tight text-[var(--color-text-primary)] truncate">{p.name || 'Unnamed'}</div>
+                <div className="text-[11.5px] text-[var(--color-text-secondary)] truncate">
+                  <span className="font-mono">{p.phone || 'no phone'}</span> · {p.age ? `${p.age} yrs` : '?'} · {p.gender || '—'}
                 </div>
               </div>
             </button>
@@ -1308,32 +876,35 @@ function PatientsView({
       </div>
 
       {/* Detail */}
-      <div className="p-6">
+      <div className="p-4 sm:p-6">
         {!selected ? (
-          <div className="h-full flex flex-col items-center justify-center text-center text-text-muted py-16">
-            <Users className="w-10 h-10 opacity-20 mb-2" />
-            <p className="text-sm">Select a patient to view bookings</p>
+          <div className="h-full flex flex-col items-center justify-center text-center text-[var(--color-text-tertiary)] py-16">
+            <Users className="w-10 h-10 opacity-25 mb-3" />
+            <p className="text-[14px] font-medium text-[var(--color-text-secondary)]">Select a patient to view bookings</p>
+            <p className="text-[12px] mt-1">Tap any name on the left to drill in.</p>
           </div>
         ) : (
-          <div className="space-y-6">
-            <div className="flex items-start justify-between">
-              <div>
-                <h3 className="text-xl font-bold text-text-dark">{selected.name}</h3>
-                <p className="text-xs text-text-muted">
-                  {selected.gender || '—'} · {selected.age || '?'} yrs · {selected.phone || 'no phone'}
+          <div className="space-y-5 sm:space-y-6">
+            <div className="flex items-start justify-between gap-3">
+              <div className="min-w-0 flex-1">
+                <h3 className="text-[20px] font-semibold tracking-tight text-[var(--color-text-primary)] truncate">{selected.name}</h3>
+                <p className="text-[12.5px] text-[var(--color-text-secondary)] mt-0.5">
+                  {selected.gender || '—'} · {selected.age || '?'} yrs · <span className="font-mono">{selected.phone || 'no phone'}</span>
                 </p>
                 {selected.address && (
-                  <p className="text-xs text-text-muted flex items-center gap-1 mt-1">
-                    <MapPin className="w-3 h-3" /> {selected.address}
+                  <p className="text-[12.5px] text-[var(--color-text-secondary)] flex items-start gap-1 mt-1.5">
+                    <MapPin className="w-3.5 h-3.5 mt-0.5 shrink-0" /> <span>{selected.address}</span>
                   </p>
                 )}
-                <p className="text-[10px] text-text-muted mt-2 uppercase tracking-widest font-bold">
-                  Phone account: {selected.userId} · Patient ID: {selected.id}
+                <p className="text-[11px] text-[var(--color-text-tertiary)] mt-2.5 break-all leading-relaxed">
+                  <span className="block sm:inline">Phone account <span className="font-mono">{selected.userId}</span></span>
+                  <span className="hidden sm:inline"> · </span>
+                  <span className="block sm:inline">Patient ID <span className="font-mono">{selected.id}</span></span>
                 </p>
               </div>
               <button
                 onClick={() => onSelect(null)}
-                className="p-1 text-text-muted hover:text-text-dark"
+                className="p-1.5 rounded-[var(--radius-sm)] text-[var(--color-text-tertiary)] hover:text-[var(--color-text-primary)] hover:bg-[var(--color-sunken)] transition-colors"
                 title="Clear selection"
               >
                 <X className="w-4 h-4" />
@@ -1341,11 +912,11 @@ function PatientsView({
             </div>
 
             <div>
-              <h4 className="text-[10px] font-black text-text-muted uppercase tracking-widest mb-3">
+              <h4 className="text-[11px] font-medium text-[var(--color-text-secondary)] uppercase tracking-[0.06em] mb-3">
                 Bookings ({patientBookings.length})
               </h4>
               {patientBookings.length === 0 ? (
-                <div className="text-xs text-text-muted bg-slate-50 border border-border-subtle rounded-lg p-4 text-center">
+                <div className="text-[13px] text-[var(--color-text-secondary)] bg-[var(--color-sunken)] border border-[var(--color-border-subtle)] rounded-[var(--radius-md)] p-4 text-center">
                   No bookings yet for this patient.
                 </div>
               ) : (
@@ -1353,14 +924,14 @@ function PatientsView({
                   {patientBookings.map(b => (
                     <div
                       key={b.bookingId}
-                      className="flex items-center justify-between border border-border-subtle rounded-lg px-4 py-3 hover:bg-slate-50 transition-colors"
+                      className="flex items-center justify-between gap-3 border border-[var(--color-border-subtle)] rounded-[var(--radius-md)] px-3 sm:px-4 py-3 hover:bg-[var(--color-sunken)] transition-colors"
                     >
                       <div className="flex-1 min-w-0">
-                        <div className="text-sm font-bold text-text-dark">
+                        <div className="text-[13.5px] font-medium text-[var(--color-text-primary)] truncate">
                           {(b.testNames || []).join(', ') || '—'}
                         </div>
-                        <div className="text-[10px] text-text-muted mt-0.5 flex items-center gap-2">
-                          <span>{b.bookingId}</span>
+                        <div className="text-[11.5px] text-[var(--color-text-secondary)] mt-0.5 flex items-center gap-1.5 flex-wrap tabular-nums">
+                          <span className="font-mono">{b.bookingId.slice(0, 8)}</span>
                           <span>·</span>
                           <span>{b.timeSlot || 'no slot'}</span>
                           <span>·</span>
@@ -1368,7 +939,7 @@ function PatientsView({
                         </div>
                       </div>
                       <span className={cn(
-                        "text-[9px] font-black uppercase tracking-widest px-2 py-1 rounded",
+                        "text-[11px] font-medium tracking-tight px-2 py-0.5 rounded-full whitespace-nowrap",
                         getStatusStyle(b.status)
                       )}>
                         {b.status}
@@ -1478,17 +1049,17 @@ function StaffView({ staff, config, onError }: { staff: Staff[]; config: Booking
   };
 
   return (
-    <div className="bg-white rounded-xl border border-border-subtle overflow-hidden">
-      <div className="p-4 border-b border-border-subtle bg-slate-50/50 flex items-center justify-between">
+    <div className="bg-[var(--color-surface)] rounded-[var(--radius-lg)] border border-[var(--color-border-subtle)] overflow-hidden">
+      <div className="p-4 sm:p-5 border-b border-[var(--color-border-subtle)] flex items-start sm:items-center justify-between gap-3 flex-col sm:flex-row">
         <div>
-          <h3 className="font-bold text-text-dark">Staff Members</h3>
-          <p className="text-xs text-text-muted">Admins and phlebotomists with dashboard access</p>
+          <h3 className="text-[15px] font-semibold tracking-tight text-[var(--color-text-primary)]">Staff Members</h3>
+          <p className="text-[13px] text-[var(--color-text-secondary)] mt-0.5">Admins and phlebotomists with dashboard access</p>
         </div>
         <button
           onClick={() => setShowForm(v => !v)}
-          className="px-4 py-2 bg-primary text-white text-[11px] font-bold uppercase tracking-wider rounded-lg hover:opacity-90 transition-opacity flex items-center gap-2"
+          className="inline-flex items-center justify-center h-10 px-4 bg-[var(--color-accent)] text-white text-[13px] font-medium tracking-tight rounded-[var(--radius-md)] hover:bg-[var(--color-accent-hover)] transition-colors gap-1.5 self-end sm:self-auto"
         >
-          <Plus className="w-3 h-3" />
+          <Plus className="w-4 h-4" />
           {showForm ? 'Cancel' : 'Add Staff'}
         </button>
       </div>
@@ -1542,7 +1113,7 @@ function StaffView({ staff, config, onError }: { staff: Staff[]; config: Booking
             </select>
           </div>
           {form.role === 'phlebotomist' && (
-            <div className="bg-white border border-border-subtle rounded-lg p-3">
+            <div className="bg-[var(--color-surface)] border border-[var(--color-border-subtle)] rounded-lg p-3">
               <DefaultScheduleEditor
                 value={form.defaultSchedule}
                 config={config}
@@ -1562,64 +1133,65 @@ function StaffView({ staff, config, onError }: { staff: Staff[]; config: Booking
         </div>
       )}
 
-      <table className="w-full">
-        <thead>
-          <tr className="bg-slate-50 border-b border-border-subtle">
-            <th className="text-left py-3 px-6 text-[10px] font-black text-text-muted uppercase tracking-widest">Name</th>
-            <th className="text-left py-3 px-6 text-[10px] font-black text-text-muted uppercase tracking-widest">Role</th>
-            <th className="text-left py-3 px-6 text-[10px] font-black text-text-muted uppercase tracking-widest">Email / Phone</th>
-            <th className="text-left py-3 px-6 text-[10px] font-black text-text-muted uppercase tracking-widest">UID</th>
-            <th className="text-left py-3 px-6 text-[10px] font-black text-text-muted uppercase tracking-widest">Schedule</th>
-            <th className="text-right py-3 px-6 text-[10px] font-black text-text-muted uppercase tracking-widest">Active</th>
-          </tr>
-        </thead>
-        <tbody className="divide-y divide-border-subtle">
-          {staff.length === 0 ? (
-            <tr><td colSpan={6} className="py-10 text-center text-text-muted text-xs">No staff records yet. Add one to get started.</td></tr>
-          ) : staff.map(s => (
-            <React.Fragment key={s.uid}>
-              <tr className="hover:bg-slate-50/50">
-                <td className="py-3 px-6 text-sm font-bold text-text-dark">{s.name}</td>
-                <td className="py-3 px-6">
-                  <span className={cn(
-                    "text-[9px] font-black uppercase tracking-widest px-2 py-0.5 rounded",
-                    s.role === 'admin' ? 'bg-purple-100 text-purple-700' : 'bg-blue-100 text-blue-700'
-                  )}>
-                    {s.role}
-                  </span>
-                </td>
-                <td className="py-3 px-6 text-xs text-text-muted">
-                  <div>{s.email}</div>
-                  {s.phone && <div className="text-[10px]">{s.phone}</div>}
-                </td>
-                <td className="py-3 px-6 text-[10px] text-text-muted font-mono">{s.uid}</td>
-                <td className="py-3 px-6">
-                  {s.role === 'phlebotomist' ? (
-                    <button
-                      onClick={() => startEditingSchedule(s)}
-                      className="text-[10px] font-bold uppercase tracking-wider px-3 py-1 rounded-md bg-slate-100 text-text-dark hover:bg-slate-200 transition-colors"
-                    >
-                      {editingScheduleUid === s.uid ? 'Editing…' : 'Edit Schedule'}
-                    </button>
-                  ) : (
-                    <span className="text-[10px] text-text-muted italic">—</span>
-                  )}
-                </td>
-                <td className="py-3 px-6 text-right">
-                  <button
-                    onClick={() => toggleActive(s)}
-                    className={cn(
-                      "text-[10px] font-bold uppercase tracking-wider px-3 py-1 rounded-full transition-colors",
-                      s.active ? "bg-emerald-100 text-emerald-700 hover:bg-emerald-200" : "bg-slate-100 text-slate-500 hover:bg-slate-200"
+      <div className="overflow-x-auto scroll-area">
+        <table className="w-full min-w-[640px]">
+          <thead>
+            <tr className="bg-[var(--color-sunken)] border-b border-[var(--color-border-subtle)]">
+              <th className="text-left py-2.5 px-4 sm:px-5 text-[11px] font-medium text-[var(--color-text-secondary)] uppercase tracking-[0.06em] whitespace-nowrap">Name</th>
+              <th className="text-left py-2.5 px-4 sm:px-5 text-[11px] font-medium text-[var(--color-text-secondary)] uppercase tracking-[0.06em] whitespace-nowrap">Role</th>
+              <th className="text-left py-2.5 px-4 sm:px-5 text-[11px] font-medium text-[var(--color-text-secondary)] uppercase tracking-[0.06em] whitespace-nowrap">Email / Phone</th>
+              <th className="hidden lg:table-cell text-left py-2.5 px-4 sm:px-5 text-[11px] font-medium text-[var(--color-text-secondary)] uppercase tracking-[0.06em] whitespace-nowrap">UID</th>
+              <th className="text-left py-2.5 px-4 sm:px-5 text-[11px] font-medium text-[var(--color-text-secondary)] uppercase tracking-[0.06em] whitespace-nowrap">Schedule</th>
+              <th className="text-right py-2.5 px-4 sm:px-5 text-[11px] font-medium text-[var(--color-text-secondary)] uppercase tracking-[0.06em] whitespace-nowrap">Active</th>
+            </tr>
+          </thead>
+          <tbody className="divide-y divide-border-subtle">
+            {staff.length === 0 ? (
+              <tr><td colSpan={6} className="py-10 text-center text-text-muted text-xs">No staff records yet. Add one to get started.</td></tr>
+            ) : staff.map(s => (
+              <React.Fragment key={s.uid}>
+                <tr className="hover:bg-slate-50/50">
+                  <td className="py-3 px-4 sm:px-6 text-sm font-bold text-text-dark whitespace-nowrap">{s.name}</td>
+                  <td className="py-3 px-4 sm:px-6 whitespace-nowrap">
+                    <span className={cn(
+                      "text-[9px] font-black uppercase tracking-widest px-2 py-0.5 rounded",
+                      s.role === 'admin' ? 'bg-purple-100 text-purple-700' : 'bg-blue-100 text-blue-700'
+                    )}>
+                      {s.role}
+                    </span>
+                  </td>
+                  <td className="py-3 px-4 sm:px-6 text-xs text-text-muted">
+                    <div className="truncate max-w-[200px] sm:max-w-none">{s.email}</div>
+                    {s.phone && <div className="text-[10px] font-mono whitespace-nowrap">{s.phone}</div>}
+                  </td>
+                  <td className="hidden lg:table-cell py-3 px-4 sm:px-6 text-[10px] text-text-muted font-mono whitespace-nowrap max-w-[180px] truncate">{s.uid}</td>
+                  <td className="py-3 px-4 sm:px-6 whitespace-nowrap">
+                    {s.role === 'phlebotomist' ? (
+                      <button
+                        onClick={() => startEditingSchedule(s)}
+                        className="text-[10px] font-bold uppercase tracking-wider px-3 py-1 rounded-md bg-slate-100 text-text-dark hover:bg-slate-200 transition-colors"
+                      >
+                        {editingScheduleUid === s.uid ? 'Editing…' : 'Edit Schedule'}
+                      </button>
+                    ) : (
+                      <span className="text-[10px] text-text-muted italic">—</span>
                     )}
-                  >
-                    {s.active ? 'Active' : 'Inactive'}
-                  </button>
-                </td>
-              </tr>
-              {editingScheduleUid === s.uid && (
-                <tr className="bg-blue-50/40">
-                  <td colSpan={6} className="px-6 py-4">
+                  </td>
+                  <td className="py-3 px-4 sm:px-6 text-right whitespace-nowrap">
+                    <button
+                      onClick={() => toggleActive(s)}
+                      className={cn(
+                        "text-[10px] font-bold uppercase tracking-wider px-3 py-1 rounded-full transition-colors",
+                        s.active ? "bg-emerald-100 text-emerald-700 hover:bg-emerald-200" : "bg-slate-100 text-slate-500 hover:bg-slate-200"
+                      )}
+                    >
+                      {s.active ? 'Active' : 'Inactive'}
+                    </button>
+                  </td>
+                </tr>
+                {editingScheduleUid === s.uid && (
+                  <tr className="bg-blue-50/40">
+                    <td colSpan={6} className="px-4 sm:px-6 py-4">
                     <DefaultScheduleEditor
                       value={editingScheduleDraft}
                       config={config}
@@ -1647,13 +1219,14 @@ function StaffView({ staff, config, onError }: { staff: Staff[]; config: Booking
           ))}
         </tbody>
       </table>
+      </div>
     </div>
   );
 }
 
 // --- DEFAULT SCHEDULE EDITOR ---
 //
-// 7-row × N-slot checkbox grid for a phlebotomist's weekly default schedule.
+// 7-row Ã— N-slot checkbox grid for a phlebotomist's weekly default schedule.
 // Each column is a slot from the current booking template; each row is a weekday.
 // Pure controlled component — parent owns the WeeklySchedule state.
 const WEEKDAY_LABELS: { key: keyof WeeklySchedule; label: string }[] = [
@@ -1719,13 +1292,13 @@ function DefaultScheduleEditor({
         <table className="text-xs w-full">
           <thead>
             <tr>
-              <th className="text-left py-2 pr-3 text-[10px] font-black text-text-muted uppercase tracking-widest">Day</th>
+              <th className="text-left py-2 pr-3 text-[11px] font-medium text-[var(--color-text-secondary)] uppercase tracking-[0.06em]">Day</th>
               {headerSlots.map(s => (
                 <th key={s.start} className="text-center py-2 px-2 text-[10px] font-bold text-text-dark whitespace-nowrap">
                   {formatSlotLabel(s)}
                 </th>
               ))}
-              <th className="text-right py-2 pl-3 text-[10px] font-black text-text-muted uppercase tracking-widest">Quick</th>
+              <th className="text-right py-2 pl-3 text-[11px] font-medium text-[var(--color-text-secondary)] uppercase tracking-[0.06em]">Quick</th>
             </tr>
           </thead>
           <tbody className="divide-y divide-border-subtle">
@@ -1906,24 +1479,24 @@ function SettingsView({ config, onError }: { config: BookingConfig; onError: (er
   };
 
   return (
-    <div className="bg-white rounded-xl border border-border-subtle overflow-hidden">
-      <div className="p-4 border-b border-border-subtle bg-slate-50/50 flex items-center justify-between">
+    <div className="bg-[var(--color-surface)] rounded-[var(--radius-lg)] border border-[var(--color-border-subtle)] overflow-hidden">
+      <div className="p-4 sm:p-5 border-b border-[var(--color-border-subtle)] flex items-start sm:items-center justify-between gap-3 flex-col sm:flex-row">
         <div>
-          <h3 className="font-bold text-text-dark flex items-center gap-2">
-            <Settings className="w-4 h-4" /> Booking Settings
+          <h3 className="text-[15px] font-semibold tracking-tight text-[var(--color-text-primary)] flex items-center gap-2">
+            <Settings className="w-4 h-4 text-[var(--color-text-secondary)]" /> Booking Settings
           </h3>
-          <p className="text-xs text-text-muted">Slot template and how far ahead customers can book.</p>
+          <p className="text-[13px] text-[var(--color-text-secondary)] mt-0.5">Slot template and how far ahead customers can book.</p>
         </div>
-        <div className="flex items-center gap-3">
+        <div className="flex items-center gap-3 self-end sm:self-auto">
           {savedFlash && (
-            <span className="text-[10px] font-bold text-emerald-600 uppercase tracking-widest flex items-center gap-1">
-              <CheckCircle className="w-3 h-3" /> Saved
+            <span className="text-[12px] font-medium text-[var(--color-status-completed)] tracking-tight flex items-center gap-1">
+              <CheckCircle className="w-3.5 h-3.5" /> Saved
             </span>
           )}
           <button
             onClick={save}
             disabled={saving || !!validation || !dirty}
-            className="px-4 py-2 bg-primary text-white text-[11px] font-bold uppercase tracking-wider rounded-lg hover:opacity-90 transition-opacity disabled:opacity-50"
+            className="inline-flex items-center justify-center h-10 px-4 bg-[var(--color-accent)] text-white text-[13px] font-medium tracking-tight rounded-[var(--radius-md)] hover:bg-[var(--color-accent-hover)] transition-colors disabled:opacity-50"
           >
             {saving ? 'Saving…' : 'Save Settings'}
           </button>
@@ -1933,7 +1506,7 @@ function SettingsView({ config, onError }: { config: BookingConfig; onError: (er
       <div className="p-5 space-y-6">
         <section>
           <div className="flex items-center justify-between mb-3">
-            <h4 className="text-[10px] font-black text-text-muted uppercase tracking-widest">Slot Template</h4>
+            <h4 className="text-[11px] font-medium text-[var(--color-text-secondary)] uppercase tracking-[0.06em]">Slot Template</h4>
             <button
               onClick={addSlot}
               className="text-[10px] font-bold text-primary hover:underline flex items-center gap-1"
@@ -1954,7 +1527,7 @@ function SettingsView({ config, onError }: { config: BookingConfig; onError: (er
                   onChange={(e) => updateSlot(i, { start: e.target.value })}
                   className="px-2 py-1 border border-border-subtle rounded text-sm outline-none focus:border-primary bg-white"
                 />
-                <span className="text-text-muted text-sm">→</span>
+                <span className="text-text-muted text-sm">â†’</span>
                 <input
                   type="time"
                   value={s.end}
@@ -1980,7 +1553,7 @@ function SettingsView({ config, onError }: { config: BookingConfig; onError: (er
 
         <section>
           <div className="flex items-center justify-between mb-3">
-            <h4 className="text-[10px] font-black text-text-muted uppercase tracking-widest">Per-Weekday Slot Overrides</h4>
+            <h4 className="text-[11px] font-medium text-[var(--color-text-secondary)] uppercase tracking-[0.06em]">Per-Weekday Slot Overrides</h4>
             <span className="text-[10px] text-text-muted">Optional. Inherit defaults unless customized.</span>
           </div>
           <div className="space-y-2">
@@ -2057,7 +1630,7 @@ function SettingsView({ config, onError }: { config: BookingConfig; onError: (er
                             onChange={(e) => updateDaySlot(i, { start: e.target.value })}
                             className="px-2 py-1 border border-border-subtle rounded text-sm outline-none focus:border-primary bg-white"
                           />
-                          <span className="text-text-muted text-sm">→</span>
+                          <span className="text-text-muted text-sm">â†’</span>
                           <input
                             type="time"
                             value={s.end}
@@ -2087,7 +1660,7 @@ function SettingsView({ config, onError }: { config: BookingConfig; onError: (er
         </section>
 
         <section>
-          <h4 className="text-[10px] font-black text-text-muted uppercase tracking-widest mb-3">Booking Window</h4>
+          <h4 className="text-[11px] font-medium text-[var(--color-text-secondary)] uppercase tracking-[0.06em] mb-3">Booking Window</h4>
           <div className="flex items-center gap-3">
             <span className="text-xs font-bold text-text-dark">Customers can book up to</span>
             <input
@@ -2103,7 +1676,7 @@ function SettingsView({ config, onError }: { config: BookingConfig; onError: (er
         </section>
 
         <section>
-          <h4 className="text-[10px] font-black text-text-muted uppercase tracking-widest mb-3">Service Area PINs</h4>
+          <h4 className="text-[11px] font-medium text-[var(--color-text-secondary)] uppercase tracking-[0.06em] mb-3">Service Area PINs</h4>
           <div className="flex flex-wrap gap-2 mb-2">
             {servicePins.map((pin) => (
               <span key={pin} className="inline-flex items-center gap-1 bg-primary/10 text-primary text-xs font-bold px-2.5 py-1 rounded-full">
@@ -2143,7 +1716,7 @@ function SettingsView({ config, onError }: { config: BookingConfig; onError: (er
         </section>
 
         <section>
-          <h4 className="text-[10px] font-black text-text-muted uppercase tracking-widest mb-3">GPS Service Radius</h4>
+          <h4 className="text-[11px] font-medium text-[var(--color-text-secondary)] uppercase tracking-[0.06em] mb-3">GPS Service Radius</h4>
           <p className="text-[11px] text-text-muted mb-2">
             When a customer shares their live WhatsApp location, the bot accepts them if they're within this many kilometers of the service center.
           </p>
@@ -2348,26 +1921,26 @@ function ScheduleView({
   };
 
   return (
-    <div className="bg-white rounded-xl border border-border-subtle overflow-hidden">
-      <div className="p-4 border-b border-border-subtle bg-slate-50/50">
-        <h3 className="font-bold text-text-dark flex items-center gap-2">
-          <Calendar className="w-4 h-4" /> Phlebotomist Schedule
+    <div className="bg-[var(--color-surface)] rounded-[var(--radius-lg)] border border-[var(--color-border-subtle)] overflow-hidden">
+      <div className="p-4 sm:p-5 border-b border-[var(--color-border-subtle)]">
+        <h3 className="text-[15px] font-semibold tracking-tight text-[var(--color-text-primary)] flex items-center gap-2">
+          <Calendar className="w-4 h-4 text-[var(--color-text-secondary)]" /> Phlebotomist Schedule
         </h3>
-        <p className="text-xs text-text-muted">Per-date availability. Empty doc = staff default schedule applies.</p>
+        <p className="text-[13px] text-[var(--color-text-secondary)] mt-0.5">Per-date availability. Empty doc = staff default schedule applies.</p>
       </div>
 
-      <div className="p-4 border-b border-border-subtle bg-white">
-        <div className="text-[10px] font-black text-text-muted uppercase tracking-widest mb-2">Date</div>
-        <div className="flex items-center gap-1.5 overflow-x-auto pb-1">
+      <div className="p-4 sm:p-5 border-b border-[var(--color-border-subtle)]">
+        <div className="text-[11px] font-medium text-[var(--color-text-secondary)] uppercase tracking-[0.06em] mb-2">Date</div>
+        <div className="flex items-center gap-1.5 overflow-x-auto pb-1 scrollbar-none">
           {dateOptions.map(d => (
             <button
               key={d}
               onClick={() => setSelectedDate(d)}
               className={cn(
-                "px-3 py-1.5 rounded-lg text-[11px] font-bold whitespace-nowrap border transition-colors",
+                "h-8 px-3 rounded-[var(--radius-md)] text-[12.5px] font-medium tracking-tight whitespace-nowrap border transition-colors",
                 selectedDate === d
-                  ? "bg-primary text-white border-primary"
-                  : "bg-white text-text-dark border-border-subtle hover:bg-slate-50"
+                  ? "bg-[var(--color-accent)] text-white border-[var(--color-accent)]"
+                  : "bg-[var(--color-surface)] text-[var(--color-text-primary)] border-[var(--color-border-subtle)] hover:bg-[var(--color-sunken)]"
               )}
             >
               {formatDateLabel(d, 'en')}
@@ -2376,22 +1949,29 @@ function ScheduleView({
         </div>
       </div>
 
-      <div className="overflow-x-auto">
-        <table className="w-full">
+      <div className="overflow-x-auto scroll-area">
+        <table className="w-full min-w-[720px]">
           <thead>
-            <tr className="bg-slate-50 border-b border-border-subtle">
-              <th className="text-left py-3 px-4 text-[10px] font-black text-text-muted uppercase tracking-widest">Phlebotomist</th>
+            <tr className="bg-[var(--color-sunken)] border-b border-[var(--color-border-subtle)]">
+              <th className="text-left py-2.5 px-4 text-[11px] font-medium text-[var(--color-text-secondary)] uppercase tracking-[0.06em] whitespace-nowrap">Phlebotomist</th>
               {dateSlots.map(s => (
-                <th key={s.start} className="text-center py-3 px-2 text-[10px] font-bold text-text-dark whitespace-nowrap">
+                <th key={s.start} className="text-center py-2.5 px-2 text-[11.5px] font-medium text-[var(--color-text-primary)] tabular-nums whitespace-nowrap">
                   {formatSlotLabel(s)}
                 </th>
               ))}
               {offTemplateSlotStarts.map(start => (
-                <th key={`off-${start}`} className="text-center py-3 px-2 text-[10px] font-bold text-amber-700 whitespace-nowrap" title="Off-template slot — booking exists but not in current template">
-                  {start} <span className="ml-1 text-[9px] font-black bg-amber-100 px-1 rounded">OFF-TEMPLATE</span>
+                <th
+                  key={`off-${start}`}
+                  className="text-center py-2.5 px-2 text-[11.5px] font-medium text-[var(--color-status-created)] tabular-nums whitespace-nowrap"
+                  title="Off-template slot — booking exists but not in current template"
+                >
+                  {start}
+                  <span className="ml-1 text-[9px] font-semibold uppercase tracking-[0.06em] bg-[var(--color-status-created-bg)] ring-1 ring-inset ring-[var(--color-status-created-ring)] px-1.5 py-0.5 rounded">
+                    Off
+                  </span>
                 </th>
               ))}
-              <th className="text-right py-3 px-4 text-[10px] font-black text-text-muted uppercase tracking-widest">Actions</th>
+              <th className="text-right py-2.5 px-4 text-[11px] font-medium text-[var(--color-text-secondary)] uppercase tracking-[0.06em]">Actions</th>
             </tr>
           </thead>
           <tbody className="divide-y divide-border-subtle">
@@ -2488,7 +2068,7 @@ function ScheduleView({
   );
 }
 
-function PhlebotomistDashboard({ user, onError }: { user: FirebaseUser; onError: (err: Error) => void }) {
+export function PhlebotomistDashboard({ user, onError }: { user: FirebaseUser; onError: (err: Error) => void }) {
   const [myBookings, setMyBookings] = useState<Booking[]>([]);
   const [unassigned, setUnassigned] = useState<Booking[]>([]);
   const [editingBookingId, setEditingBookingId] = useState<string | null>(null);
@@ -2593,29 +2173,38 @@ function PhlebotomistDashboard({ user, onError }: { user: FirebaseUser; onError:
   }, 0);
 
   return (
-    <div className="space-y-8">
-      <div className="flex items-center justify-end">
+    <div className="space-y-6 sm:space-y-7">
+      <div className="flex items-end justify-between gap-3">
+        <div className="min-w-0">
+          <h1 className="text-[22px] sm:text-[26px] font-semibold tracking-tight leading-[1.2] text-[var(--color-text-primary)]">
+            My Queue
+          </h1>
+          <p className="mt-0.5 text-[13px] text-[var(--color-text-secondary)]">
+            {active.length} assigned · {unassigned.length} unclaimed
+          </p>
+        </div>
         <button
           onClick={() => setNewBookingOpen(true)}
-          className="px-3 py-1.5 text-[10px] font-bold uppercase tracking-wider rounded-md bg-primary text-white hover:opacity-90 whitespace-nowrap flex items-center gap-1"
+          className="inline-flex items-center gap-1.5 h-10 px-3.5 sm:px-4 rounded-[var(--radius-md)] bg-[var(--color-accent)] text-white text-[13px] font-medium tracking-tight hover:bg-[var(--color-accent-hover)] transition-colors shrink-0"
         >
-          <Plus className="w-3 h-3" />
-          New Booking
+          <Plus className="w-4 h-4" />
+          <span className="hidden sm:inline">New Booking</span>
+          <span className="sm:hidden">New</span>
         </button>
       </div>
 
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+      <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 sm:gap-4">
         <StatCard title="Today's Assignments" value={active.length} icon={<Calendar className="w-5 h-5 text-blue-500" />} />
         <StatCard title="Unassigned Queue" value={unassigned.length} icon={<AlertTriangle className="w-5 h-5 text-amber-500" />} />
         <StatCard title="Expected Revenue" value={`₹${expectedRevenue.toLocaleString()}`} icon={<TrendingUp className="w-5 h-5 text-emerald-500" />} />
       </div>
 
       <section>
-        <h3 className="text-[10px] font-black text-text-muted uppercase tracking-widest mb-3">
+        <h3 className="text-[11px] font-medium text-[var(--color-text-secondary)] uppercase tracking-[0.06em] mb-3">
           Today's Assignments ({active.length})
         </h3>
         {active.length === 0 ? (
-          <div className="text-xs text-text-muted bg-white border border-border-subtle rounded-xl p-6 text-center">
+          <div className="text-xs text-text-muted bg-[var(--color-surface)] border border-[var(--color-border-subtle)] rounded-xl p-6 text-center">
             No active assignments. Self-assign from the queue below.
           </div>
         ) : (
@@ -2635,11 +2224,11 @@ function PhlebotomistDashboard({ user, onError }: { user: FirebaseUser; onError:
       </section>
 
       <section>
-        <h3 className="text-[10px] font-black text-text-muted uppercase tracking-widest mb-3">
+        <h3 className="text-[11px] font-medium text-[var(--color-text-secondary)] uppercase tracking-[0.06em] mb-3">
           Unassigned Queue ({unassigned.length})
         </h3>
         {unassigned.length === 0 ? (
-          <div className="text-xs text-text-muted bg-white border border-border-subtle rounded-xl p-6 text-center">
+          <div className="text-xs text-text-muted bg-[var(--color-surface)] border border-[var(--color-border-subtle)] rounded-xl p-6 text-center">
             No unassigned bookings in the queue.
           </div>
         ) : (
@@ -2659,7 +2248,7 @@ function PhlebotomistDashboard({ user, onError }: { user: FirebaseUser; onError:
       <section>
         <button
           onClick={() => setShowCompleted(v => !v)}
-          className="text-[10px] font-black text-text-muted uppercase tracking-widest mb-3 flex items-center gap-2 hover:text-text-dark"
+          className="text-[11px] font-medium text-[var(--color-text-secondary)] uppercase tracking-[0.06em] mb-3 flex items-center gap-2 hover:text-text-dark"
         >
           {showCompleted ? <ChevronDown className="w-3 h-3" /> : <ChevronRight className="w-3 h-3" />}
           Completed Today ({completedToday.length})
@@ -2709,53 +2298,53 @@ function PhlebBookingCard({
     : null;
 
   return (
-    <div className="bg-white border border-border-subtle rounded-xl p-5 hover:shadow-md transition-shadow">
-      <div className="flex items-start justify-between gap-4 mb-4">
-        <div className="flex items-start gap-3">
-          <div className="w-10 h-10 rounded-full bg-slate-100 flex items-center justify-center border border-border-subtle">
-            <User className="w-5 h-5 text-primary" />
+    <div className="bg-[var(--color-surface)] border border-[var(--color-border-subtle)] rounded-[var(--radius-lg)] p-4 sm:p-5 transition-shadow hover:shadow-[var(--shadow-sm)]">
+      <div className="flex items-start justify-between gap-3 sm:gap-4 mb-4">
+        <div className="flex items-start gap-3 min-w-0 flex-1">
+          <div className="size-10 shrink-0 rounded-full bg-[var(--color-sunken)] flex items-center justify-center border border-[var(--color-border-subtle)] text-[var(--color-accent-hover)]">
+            <User className="w-5 h-5" />
           </div>
-          <div>
-            <div className="flex items-center gap-2 flex-wrap">
-              <span className="font-bold text-text-dark">{booking.patientName}</span>
-              <span className="text-[9px] bg-slate-100 px-2 py-0.5 rounded font-black tracking-tighter uppercase text-text-dark">
+          <div className="min-w-0 flex-1">
+            <div className="flex items-center gap-1.5 sm:gap-2 flex-wrap">
+              <span className="font-semibold text-[15px] tracking-tight text-[var(--color-text-primary)]">{booking.patientName}</span>
+              <span className="text-[10px] bg-[var(--color-sunken)] ring-1 ring-inset ring-[var(--color-border-subtle)] px-1.5 py-0.5 rounded font-medium uppercase tracking-[0.04em] text-[var(--color-text-secondary)] whitespace-nowrap">
                 {booking.patientGender || '—'} · {booking.patientAge || '?'}
               </span>
               {priority && (
                 <span className={cn(
-                  "text-[9px] px-2 py-0.5 rounded font-bold uppercase",
+                  "text-[10.5px] px-2 py-0.5 rounded-full font-medium tracking-tight capitalize whitespace-nowrap",
                   getPriorityStyle(priority)
                 )}>
                   {priority} priority
                 </span>
               )}
               <span className={cn(
-                "text-[9px] px-2 py-0.5 rounded font-black uppercase tracking-widest",
+                "text-[10.5px] px-2 py-0.5 rounded-full font-medium tracking-tight whitespace-nowrap",
                 getStatusStyle(booking.status)
               )}>
                 {booking.status}
               </span>
             </div>
-            <div className="text-[10px] text-text-muted mt-1 flex items-center gap-3 flex-wrap">
-              <a href={`tel:${booking.patientPhone}`} className="flex items-center gap-1 hover:text-primary">
+            <div className="text-[12px] text-[var(--color-text-secondary)] mt-1.5 flex items-center gap-x-3 gap-y-1 flex-wrap">
+              <a href={`tel:${booking.patientPhone}`} className="flex items-center gap-1 font-mono hover:text-[var(--color-accent-hover)] transition-colors">
                 <Phone className="w-3 h-3" /> {booking.patientPhone || 'no phone'}
               </a>
               <span className="flex items-center gap-1">
                 <Calendar className="w-3 h-3" />
                 {booking.bookingDate ? (
-                  <span className="text-text-dark font-bold">{formatDateLabel(booking.bookingDate, 'en')}</span>
+                  <span className="text-[var(--color-text-primary)] font-medium">{formatDateLabel(booking.bookingDate, 'en')}</span>
                 ) : (
                   <>
                     <span>—</span>
-                    <span className="text-[9px] font-black bg-amber-100 text-amber-700 px-1 py-0.5 rounded uppercase tracking-widest">Legacy</span>
+                    <span className="text-[10px] font-medium bg-[var(--color-status-created-bg)] text-[var(--color-status-created)] ring-1 ring-inset ring-[var(--color-status-created-ring)] px-1.5 py-0.5 rounded-full uppercase tracking-[0.04em]">Legacy</span>
                   </>
                 )}
               </span>
-              <span className="flex items-center gap-1">
+              <span className="flex items-center gap-1 tabular-nums">
                 <Clock className="w-3 h-3" /> {booking.timeSlot || 'no slot'}
               </span>
               {booking.isFastingConfirmed && (
-                <span className="flex items-center gap-1 text-blue-600 font-bold">
+                <span className="flex items-center gap-1 text-[var(--color-status-assigned)] font-medium">
                   <Activity className="w-3 h-3" /> Fasting
                 </span>
               )}
@@ -2784,7 +2373,7 @@ function PhlebBookingCard({
                 rel="noreferrer"
                 className="text-[10px] font-bold text-primary hover:underline whitespace-nowrap"
               >
-                Open in Maps ↗
+                Open in Maps â†—
               </a>
             )}
           </div>
@@ -2797,11 +2386,11 @@ function PhlebBookingCard({
       </div>
 
       {mode !== 'completed' && (
-        <div className="flex items-center gap-2 flex-wrap pt-3 border-t border-border-subtle">
+        <div className="flex items-center gap-2 flex-wrap pt-3 border-t border-[var(--color-border-subtle)]">
           {mode === 'queue' && (
             <button
               onClick={onSelfAssign}
-              className="px-4 py-2 bg-primary text-white text-[11px] font-bold uppercase tracking-wider rounded-lg hover:opacity-90 transition-opacity"
+              className="inline-flex items-center justify-center h-9 px-3.5 bg-[var(--color-accent)] text-white text-[13px] font-medium tracking-tight rounded-[var(--radius-md)] hover:bg-[var(--color-accent-hover)] transition-colors"
             >
               Self-Assign
             </button>
@@ -2810,14 +2399,14 @@ function PhlebBookingCard({
             <>
               <button
                 onClick={onEditTests}
-                className="px-3 py-1.5 bg-slate-100 text-text-dark text-[10px] font-bold uppercase tracking-wider rounded-lg hover:bg-slate-200 transition-colors"
+                className="inline-flex items-center justify-center h-9 px-3 bg-[var(--color-sunken)] text-[var(--color-text-primary)] border border-[var(--color-border-subtle)] text-[12.5px] font-medium tracking-tight rounded-[var(--radius-md)] hover:bg-[var(--color-border-subtle)] transition-colors"
               >
                 Edit Tests
               </button>
               {booking.status === 'Assigned' && (
                 <button
                   onClick={onMarkCollected}
-                  className="px-3 py-1.5 bg-teal-600 text-white text-[10px] font-bold uppercase tracking-wider rounded-lg hover:opacity-90 transition-opacity"
+                  className="inline-flex items-center justify-center h-9 px-3 bg-[var(--color-status-collected)] text-white text-[12.5px] font-medium tracking-tight rounded-[var(--radius-md)] hover:opacity-90 transition-opacity"
                 >
                   Mark Collected
                 </button>
@@ -2825,13 +2414,13 @@ function PhlebBookingCard({
               {booking.status === 'Collected' && (
                 <button
                   onClick={onMarkProcessing}
-                  className="px-3 py-1.5 bg-purple-600 text-white text-[10px] font-bold uppercase tracking-wider rounded-lg hover:opacity-90 transition-opacity"
+                  className="inline-flex items-center justify-center h-9 px-3 bg-[var(--color-status-processing)] text-white text-[12.5px] font-medium tracking-tight rounded-[var(--radius-md)] hover:opacity-90 transition-opacity"
                 >
                   Mark Processing
                 </button>
               )}
               {booking.status === 'Processing' && (
-                <span className="text-[10px] font-bold text-purple-700 uppercase tracking-widest">
+                <span className="text-[11px] font-medium text-[var(--color-status-processing)] tracking-tight">
                   Awaiting admin to mark Completed
                 </span>
               )}
@@ -2865,18 +2454,21 @@ function TestPickerModal({
   const total = computeBookingPrice(selected, ecgAddon);
 
   return (
-    <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4">
-      <div className="bg-white rounded-2xl max-w-md w-full max-h-[80vh] flex flex-col overflow-hidden">
-        <header className="p-5 border-b border-border-subtle flex items-center justify-between">
-          <div>
-            <h3 className="font-bold text-text-dark">Edit Tests</h3>
-            <p className="text-xs text-text-muted">Booking {booking.bookingId} · {booking.patientName}</p>
+    <div className="fixed inset-0 bg-[var(--color-overlay)] backdrop-blur-[2px] z-[90] flex items-end sm:items-center justify-center p-0 sm:p-4" role="dialog" aria-modal="true">
+      <div className="bg-[var(--color-surface)] rounded-t-[var(--radius-xl-2)] sm:rounded-[var(--radius-lg)] border-t sm:border border-[var(--color-border-subtle)] shadow-[var(--shadow-lg)] sm:max-w-md w-full max-h-[92vh] sm:max-h-[80vh] flex flex-col overflow-hidden">
+        <div className="flex sm:hidden justify-center pt-2.5 pb-1" aria-hidden>
+          <span className="h-1 w-9 rounded-full bg-[var(--color-border-strong)]" />
+        </div>
+        <header className="px-4 sm:px-5 py-3.5 sm:py-4 border-b border-[var(--color-border-subtle)] flex items-center justify-between gap-3">
+          <div className="min-w-0">
+            <h3 className="text-[16px] font-semibold tracking-tight text-[var(--color-text-primary)]">Edit Tests</h3>
+            <p className="text-[12px] text-[var(--color-text-secondary)] truncate"><span className="font-mono">{booking.bookingId.slice(0, 8)}</span> · {booking.patientName}</p>
           </div>
-          <button onClick={onClose} className="text-text-muted hover:text-text-dark">
-            <X className="w-5 h-5" />
+          <button onClick={onClose} className="p-1.5 rounded-[var(--radius-sm)] text-[var(--color-text-tertiary)] hover:text-[var(--color-text-primary)] hover:bg-[var(--color-sunken)] transition-colors" aria-label="Close">
+            <X className="w-4 h-4" />
           </button>
         </header>
-        <div className="flex-1 overflow-auto p-5 space-y-2">
+        <div className="flex-1 overflow-auto scroll-area px-4 sm:px-5 py-4 space-y-2">
           {englishTests.map(name => {
             const isOn = selected.includes(name);
             return (
@@ -2884,37 +2476,39 @@ function TestPickerModal({
                 key={name}
                 onClick={() => toggle(name)}
                 className={cn(
-                  "w-full flex items-center justify-between px-4 py-3 rounded-lg border transition-colors text-left",
-                  isOn ? "border-primary bg-primary/5" : "border-border-subtle hover:bg-slate-50"
+                  "w-full flex items-center justify-between gap-3 px-3.5 py-3 rounded-[var(--radius-md)] border transition-colors text-left",
+                  isOn
+                    ? "border-[var(--color-accent)] bg-[var(--color-accent-soft)]"
+                    : "border-[var(--color-border-subtle)] hover:bg-[var(--color-sunken)]"
                 )}
               >
-                <div>
-                  <div className="font-bold text-sm text-text-dark">{name}</div>
-                  <div className="text-[10px] text-text-muted">{getPackageByName(name)?.tests ?? ''}</div>
+                <div className="min-w-0">
+                  <div className="text-[13.5px] font-medium tracking-tight text-[var(--color-text-primary)] truncate">{name}</div>
+                  <div className="text-[11.5px] text-[var(--color-text-secondary)] truncate">{getPackageByName(name)?.tests ?? ''}</div>
                 </div>
-                <div className="flex items-center gap-3">
-                  <span className="text-sm font-black text-text-dark">₹{getPackagePrice(name)}</span>
-                  {isOn ? <CheckCircle2 className="w-5 h-5 text-primary" /> : <Plus className="w-5 h-5 text-text-muted" />}
+                <div className="flex items-center gap-2 shrink-0">
+                  <span className="text-[13px] font-semibold tabular-nums text-[var(--color-text-primary)]">₹{getPackagePrice(name)}</span>
+                  {isOn ? <CheckCircle2 className="w-5 h-5 text-[var(--color-accent)]" /> : <Plus className="w-5 h-5 text-[var(--color-text-tertiary)]" />}
                 </div>
               </button>
             );
           })}
         </div>
-        <footer className="p-5 border-t border-border-subtle flex items-center justify-between">
-          <div className="text-sm">
-            <span className="text-text-muted">Total: </span>
-            <span className="font-black text-text-dark">₹{total}</span>
+        <footer className="px-4 sm:px-5 py-3 border-t border-[var(--color-border-subtle)] flex items-center justify-between gap-3">
+          <div className="text-[13px]">
+            <span className="text-[var(--color-text-secondary)]">Total </span>
+            <span className="font-semibold tabular-nums text-[var(--color-text-primary)]">₹{total}</span>
           </div>
           <div className="flex gap-2">
             <button
               onClick={onClose}
-              className="px-4 py-2 text-[11px] font-bold uppercase tracking-wider text-text-muted hover:text-text-dark"
+              className="inline-flex items-center justify-center h-9 px-3 text-[13px] font-medium tracking-tight text-[var(--color-text-secondary)] hover:text-[var(--color-text-primary)] hover:bg-[var(--color-sunken)] rounded-[var(--radius-md)] transition-colors"
             >
               Cancel
             </button>
             <button
               onClick={() => onSave(selected)}
-              className="px-5 py-2 bg-primary text-white text-[11px] font-bold uppercase tracking-wider rounded-lg hover:opacity-90"
+              className="inline-flex items-center justify-center h-9 px-4 bg-[var(--color-accent)] text-white text-[13px] font-medium tracking-tight rounded-[var(--radius-md)] hover:bg-[var(--color-accent-hover)] transition-colors"
             >
               Save
             </button>
@@ -2926,17 +2520,9 @@ function TestPickerModal({
 }
 
 function StatCard({ title, value, icon }: { title: string, value: any, icon: React.ReactNode }) {
-  return (
-    <div className="bg-white p-5 rounded-xl border border-border-subtle shadow-sm flex items-start justify-between">
-      <div>
-        <div className="text-[10px] font-black text-text-muted uppercase tracking-widest mb-1">{title}</div>
-        <div className="text-2xl font-black text-text-dark leading-none">{value}</div>
-      </div>
-      <div className="w-10 h-10 rounded-xl bg-slate-50 flex items-center justify-center border border-border-subtle">
-        {icon}
-      </div>
-    </div>
-  );
+  // Delegate to the new ui/ primitive — keeps the legacy call sites working
+  // while every dashboard inherits the refined visual style.
+  return <UiStatCard label={title} value={value} icon={icon} />;
 }
 
 function resolvePriority(b: Booking): 'high' | 'medium' | 'low' | null {
@@ -2952,22 +2538,24 @@ function resolvePriority(b: Booking): 'high' | 'medium' | 'low' | null {
 }
 
 function getPriorityStyle(p: 'high' | 'medium' | 'low' | null) {
+  // Subtle tinted pills with a 1px inset ring for definition.
   switch (p) {
-    case 'high': return 'bg-red-100 text-red-600';
-    case 'medium': return 'bg-amber-100 text-amber-600';
-    case 'low': return 'bg-slate-100 text-slate-600';
-    default: return 'bg-slate-100 text-slate-400';
+    case 'high':   return 'bg-[var(--color-status-danger-bg)] text-[var(--color-status-danger)] ring-1 ring-inset ring-[var(--color-status-danger-ring)]';
+    case 'medium': return 'bg-[var(--color-status-created-bg)] text-[var(--color-status-created)] ring-1 ring-inset ring-[var(--color-status-created-ring)]';
+    case 'low':    return 'bg-[var(--color-sunken)] text-[var(--color-text-secondary)] ring-1 ring-inset ring-[var(--color-border-subtle)]';
+    default:       return 'bg-[var(--color-sunken)] text-[var(--color-text-tertiary)] ring-1 ring-inset ring-[var(--color-border-subtle)]';
   }
 }
 
 function getStatusStyle(status: BookingStatus) {
+  // Semantic booking-lifecycle tints — every state has matching bg + text + ring.
   switch (status) {
-    case 'Created': return 'bg-slate-100 text-slate-600';
-    case 'Assigned': return 'bg-blue-100 text-blue-800';
-    case 'Collected': return 'bg-teal-100 text-teal-800';
-    case 'Processing': return 'bg-purple-100 text-purple-800';
-    case 'Completed': return 'bg-green-100 text-green-800';
-    default: return 'bg-gray-100 text-gray-500';
+    case 'Created':    return 'bg-[var(--color-status-created-bg)] text-[var(--color-status-created)] ring-1 ring-inset ring-[var(--color-status-created-ring)]';
+    case 'Assigned':   return 'bg-[var(--color-status-assigned-bg)] text-[var(--color-status-assigned)] ring-1 ring-inset ring-[var(--color-status-assigned-ring)]';
+    case 'Collected':  return 'bg-[var(--color-status-collected-bg)] text-[var(--color-status-collected)] ring-1 ring-inset ring-[var(--color-status-collected-ring)]';
+    case 'Processing': return 'bg-[var(--color-status-processing-bg)] text-[var(--color-status-processing)] ring-1 ring-inset ring-[var(--color-status-processing-ring)]';
+    case 'Completed':  return 'bg-[var(--color-status-completed-bg)] text-[var(--color-status-completed)] ring-1 ring-inset ring-[var(--color-status-completed-ring)]';
+    default:           return 'bg-[var(--color-sunken)] text-[var(--color-text-tertiary)] ring-1 ring-inset ring-[var(--color-border-subtle)]';
   }
 }
 
@@ -2981,7 +2569,7 @@ interface Message {
   buttons?: string[];
 }
 
-function WhatsAppSimulator({ userId }: { userId: string }) {
+export function WhatsAppSimulator({ userId }: { userId: string }) {
   const [messages, setMessages] = useState<Message[]>([]);
   const [step, setStep] = useState<ChatStep>('LANGUAGE_SELECTION');
   const [language, setLanguage] = useState<Language | null>(null);
@@ -3007,7 +2595,7 @@ function WhatsAppSimulator({ userId }: { userId: string }) {
     if (!quiet) {
       if (language) {
         const langT = TRANSLATIONS[language];
-        addBotMessage(`👋 ${langT.welcome}\n${langT.menuHeader}`, (Object.values(langT.options) as string[]).concat([langT.backToMainMenu, langT.endSession]));
+        addBotMessage(`ðŸ‘‹ ${langT.welcome}\n${langT.menuHeader}`, (Object.values(langT.options) as string[]).concat([langT.backToMainMenu, langT.endSession]));
       } else {
         setStep('LANGUAGE_SELECTION');
         setInputVisible(true);
@@ -3055,7 +2643,7 @@ function WhatsAppSimulator({ userId }: { userId: string }) {
             text: TRANSLATIONS.en.languageSelectPrompt,
             sender: 'bot',
             timestamp: new Date(),
-            buttons: ['English', 'മലയാളം'],
+            buttons: ['English', 'à´®à´²à´¯à´¾à´³à´‚'],
           }]);
         }
         setInputVisible(false);
@@ -3083,7 +2671,7 @@ function WhatsAppSimulator({ userId }: { userId: string }) {
     } else {
       addBotMessage(
         TRANSLATIONS.en.languageSelectPrompt,
-        ['English', 'മലയാളം']
+        ['English', 'à´®à´²à´¯à´¾à´³à´‚']
       );
     }
   };
@@ -3243,7 +2831,7 @@ function WhatsAppSimulator({ userId }: { userId: string }) {
       value === t.options.call ||
       value === t.options.support ||
       value === 'Back to Menu' ||
-      value === 'തിരികെ' ||
+      value === 'à´¤à´¿à´°à´¿à´•àµ†' ||
       ['menu', 'home', 'restart'].includes(normalizedVal);
 
     if (isMenuCommand) {
@@ -3314,7 +2902,7 @@ function WhatsAppSimulator({ userId }: { userId: string }) {
 
     if (freeTextSteps.includes(step) && staleButtons.includes(value)) {
       addBotMessage(
-        language === 'en' ? "Please provide the requested information or cancel the booking." : "ദയവായി ആവശ്യപ്പെട്ട വിവരങ്ങൾ നൽകുക അല്ലെങ്കിൽ ബുക്കിംഗ് റദ്ദാക്കുക.",
+        language === 'en' ? "Please provide the requested information or cancel the booking." : "à´¦à´¯à´µà´¾à´¯à´¿ à´†à´µà´¶àµà´¯à´ªàµà´ªàµ†à´Ÿàµà´Ÿ à´µà´¿à´µà´°à´™àµà´™àµ¾ à´¨àµ½à´•àµà´• à´…à´²àµà´²àµ†à´™àµà´•à´¿àµ½ à´¬àµà´•àµà´•à´¿à´‚à´—àµ à´±à´¦àµà´¦à´¾à´•àµà´•àµà´•.",
         [t.cancelBooking],
         true
       );
@@ -3336,17 +2924,17 @@ function WhatsAppSimulator({ userId }: { userId: string }) {
           break;
 
         case 'LANGUAGE_SELECTION':
-          if (value === 'English' || value === 'മലയാളം') {
+          if (value === 'English' || value === 'à´®à´²à´¯à´¾à´³à´‚') {
             const lang: Language = value === 'English' ? 'en' : 'ml';
             setLanguage(lang);
             const langT = TRANSLATIONS[lang];
             setStep('MAIN_MENU');
-            addBotMessage(`👋 ${langT.welcome}\n${langT.menuHeader}`, (Object.values(langT.options) as string[]).concat([langT.changeLanguage, langT.endSession]));
+            addBotMessage(`ðŸ‘‹ ${langT.welcome}\n${langT.menuHeader}`, (Object.values(langT.options) as string[]).concat([langT.changeLanguage, langT.endSession]));
           } else {
             // Re-prompt if they typed random text instead of clicking language
             addBotMessage(
               t.languageSelectPrompt,
-              ['English', 'മലയാളം']
+              ['English', 'à´®à´²à´¯à´¾à´³à´‚']
             );
           }
           break;
@@ -3381,9 +2969,9 @@ function WhatsAppSimulator({ userId }: { userId: string }) {
             addBotMessage(t.supportResponse, [t.mainMenu]);
           } else if (value === t.changeLanguage) {
             setStep('LANGUAGE_SELECTION');
-            addBotMessage(t.selectLabel, ['English', 'മലയാളം']);
+            addBotMessage(t.selectLabel, ['English', 'à´®à´²à´¯à´¾à´³à´‚']);
           } else {
-            addBotMessage("Coming soon... / ഉടൻ വരുന്നു...", [t.mainMenu, t.endSession]);
+            addBotMessage("Coming soon... / à´‰à´Ÿàµ» à´µà´°àµà´¨àµà´¨àµ...", [t.mainMenu, t.endSession]);
           }
           break;
 
@@ -3468,7 +3056,7 @@ function WhatsAppSimulator({ userId }: { userId: string }) {
             addBotMessage(t.askLocation, [t.shareLocation, t.backToMainMenu], true);
           } catch (e) {
             console.error('[Simulator] Failed to save patient profile', e);
-            addBotMessage("❌ Could not save details. Please try again.", [t.cancelBooking], true);
+            addBotMessage("âŒ Could not save details. Please try again.", [t.cancelBooking], true);
           }
           break;
 
@@ -3868,5 +3456,71 @@ function WhatsAppSimulator({ userId }: { userId: string }) {
         </footer>
       </div>
     </div>
+  );
+}
+
+// ============================================================================
+// ROUTER-BASED APP (active default export)
+// ============================================================================
+
+import { BrowserRouter, Routes, Route } from 'react-router-dom';
+import { AuthProvider } from './context/AuthContext';
+import { ErrorBoundaryProvider, useErrorBoundary } from './context/ErrorContext';
+import { AppShell } from './shell/AppShell';
+import { SignInRoute } from './routes/SignIn';
+import {
+  BookingsRoute,
+  PatientsRoute,
+  StaffRoute as StaffRouteAdmin,
+  ScheduleRoute,
+  SettingsRoute,
+} from './routes/AdminDashboard';
+import { QueueRoute } from './routes/Queue';
+import { SimulatorRoute } from './routes/Simulator';
+import { RootRedirect } from './routes/RootRedirect';
+import { ProtectedRoute } from './routes/ProtectedRoute';
+
+function AppContent() {
+  const { dbError } = useErrorBoundary();
+  if (dbError) return <ErrorFallback error={dbError} />;
+
+  return (
+    <Routes>
+      <Route path="/sign-in" element={<SignInRoute />} />
+      <Route element={<ProtectedRoute />}>
+        <Route element={<AppShell />}>
+          <Route index element={<RootRedirect />} />
+          <Route path="/bookings" element={<BookingsRoute />} />
+          <Route path="/patients" element={<PatientsRoute />} />
+          <Route path="/staff" element={<StaffRouteAdmin />} />
+          <Route path="/schedule" element={<ScheduleRoute />} />
+          <Route path="/settings" element={<SettingsRoute />} />
+          <Route path="/queue" element={<QueueRoute />} />
+          <Route path="/simulator" element={<SimulatorRoute />} />
+          <Route path="*" element={<RootRedirect />} />
+        </Route>
+      </Route>
+    </Routes>
+  );
+}
+
+export default function App() {
+  // One-shot Firestore connectivity probe (preserved from legacy App).
+  useEffect(() => {
+    getDocFromServer(doc(db, 'test', 'connection')).catch((error: any) => {
+      if (error instanceof Error && error.message.includes('the client is offline')) {
+        console.error('Firebase client is offline.');
+      }
+    });
+  }, []);
+
+  return (
+    <BrowserRouter>
+      <ErrorBoundaryProvider>
+        <AuthProvider>
+          <AppContent />
+        </AuthProvider>
+      </ErrorBoundaryProvider>
+    </BrowserRouter>
   );
 }

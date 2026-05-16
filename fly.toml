@@ -1,0 +1,22 @@
+# fly.toml — generated for CareMol-Bot
+app = "caremol-bot"
+primary_region = "bom"  # Mumbai — closest to Kerala
+
+[build]
+  # VITE_ vars are baked into the JS bundle at build time.
+  # Pass them via: fly deploy --build-arg VITE_GOOGLE_MAPS_API_KEY=... --build-arg VITE_CAREMOL_PHONE=...
+  # Or set them in [build.args] below (safe for non-secret values like a phone number).
+  # [build.args]
+  #   VITE_CAREMOL_PHONE = "919876543210"
+
+[http_service]
+  internal_port = 3000
+  force_https = true
+  auto_stop_machines = true
+  auto_start_machines = true
+  min_machines_running = 0
+
+[[vm]]
+  memory = "512mb"
+  cpu_kind = "shared"
+  cpus = 1

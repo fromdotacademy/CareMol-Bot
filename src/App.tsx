@@ -188,7 +188,7 @@ export function ErrorFallback({ error }: { error: Error }) {
 
 // --- DASHBOARD VIEW ---
 
-export type AdminTab = 'bookings' | 'patients' | 'staff' | 'schedule' | 'settings';
+export type AdminTab = 'bookings' | 'patients' | 'staff' | 'schedule' | 'settings' | 'analytics';
 
 export function DashboardView({ tab: tabProp, onTabChange, onError }: { tab?: AdminTab; onTabChange?: (t: AdminTab) => void; onError: (err: Error) => void }) {
   const [bookings, setBookings] = useState<Booking[]>([]);
@@ -424,6 +424,7 @@ export function DashboardView({ tab: tabProp, onTabChange, onError }: { tab?: Ad
               {tab === 'staff' && `${staff.length} staff members`}
               {tab === 'schedule' && 'Per-phlebotomist availability'}
               {tab === 'settings' && 'Booking template, service area, and account'}
+              {tab === 'analytics' && 'Revenue, bookings, and trends'}
             </p>
           </div>
           <button
@@ -462,7 +463,7 @@ export function DashboardView({ tab: tabProp, onTabChange, onError }: { tab?: Ad
           (the sidebar/bottom-bar already provides navigation in that case). */}
       {tabProp === undefined && (
         <div className="flex items-center gap-1 border-b border-border-subtle overflow-x-auto">
-          {(['bookings', 'patients', 'staff', 'schedule', 'settings'] as const).map(t => (
+          {(['bookings', 'patients', 'staff', 'schedule', 'analytics', 'settings'] as const).map(t => (
             <button
               key={t}
               onClick={() => setTab(t)}
@@ -481,7 +482,9 @@ export function DashboardView({ tab: tabProp, onTabChange, onError }: { tab?: Ad
                     ? `Staff (${staff.length})`
                     : t === 'schedule'
                       ? 'Schedule'
-                      : 'Settings'}
+                      : t === 'analytics'
+                        ? 'Analytics'
+                        : 'Settings'}
             </button>
           ))}
         </div>
@@ -489,6 +492,8 @@ export function DashboardView({ tab: tabProp, onTabChange, onError }: { tab?: Ad
 
       {tab === 'settings' ? (
         <SettingsView config={config} onError={onError} />
+      ) : tab === 'analytics' ? (
+        <AnalyticsView bookings={bookings} />
       ) : tab === 'schedule' ? (
         <ScheduleView staff={staff} config={config} bookings={bookings} onError={onError} />
       ) : tab === 'staff' ? (
@@ -1786,6 +1791,303 @@ function bumpHour(time: string): string {
   const nh = Math.floor(total / 60);
   const nm = total % 60;
   return `${String(nh).padStart(2, '0')}:${String(nm).padStart(2, '0')}`;
+}
+
+// --- ANALYTICS VIEW ---
+//
+// Client-side aggregation over the same `bookings` subscription DashboardView
+// already maintains. No new Firestore reads, no charting deps — just CSS bars.
+
+type AnalyticsRange = '7' | '30' | 'all';
+
+// Subtract N days from a YYYY-MM-DD IST date string.
+function subDaysIso(iso: string, n: number): string {
+  // Parse as IST midnight, subtract, format back. Done with simple math on
+  // the string to avoid timezone gotchas (the iso is already in IST).
+  const [y, m, d] = iso.split('-').map(Number);
+  const dt = new Date(Date.UTC(y, m - 1, d));
+  dt.setUTCDate(dt.getUTCDate() - n);
+  return `${dt.getUTCFullYear()}-${String(dt.getUTCMonth() + 1).padStart(2, '0')}-${String(dt.getUTCDate()).padStart(2, '0')}`;
+}
+
+const STATUS_COLORS: Record<BookingStatus, { bg: string; ring: string; dot: string; label: string }> = {
+  Created:    { bg: 'bg-slate-400',  ring: 'ring-slate-300',   dot: 'bg-slate-400',   label: 'Created' },
+  Assigned:   { bg: 'bg-amber-500',  ring: 'ring-amber-300',   dot: 'bg-amber-500',   label: 'Assigned' },
+  Collected:  { bg: 'bg-blue-500',   ring: 'ring-blue-300',    dot: 'bg-blue-500',    label: 'Collected' },
+  Processing: { bg: 'bg-violet-500', ring: 'ring-violet-300',  dot: 'bg-violet-500',  label: 'Processing' },
+  Completed:  { bg: 'bg-emerald-500',ring: 'ring-emerald-300', dot: 'bg-emerald-500', label: 'Completed' },
+};
+
+const WEEKDAY_SHORT = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
+
+function AnalyticsView({ bookings }: { bookings: Booking[] }) {
+  const [range, setRange] = useState<AnalyticsRange>('30');
+
+  const today = getISTToday();
+  const cutoff = range === 'all' ? null : subDaysIso(today, Number(range) - 1);
+
+  const filtered = useMemo(() => {
+    if (!cutoff) return bookings;
+    return bookings.filter(b => {
+      // Prefer bookingDate (IST string); fall back to createdAt (ISO) for legacy.
+      const d = b.bookingDate ?? (b.createdAt ? String(b.createdAt).slice(0, 10) : null);
+      return d ? d >= cutoff : false;
+    });
+  }, [bookings, cutoff]);
+
+  const revenue = filtered.reduce((s, b) => s + (b.price ?? 0), 0);
+  const total = filtered.length;
+  const completedCount = filtered.filter(b => b.status === 'Completed').length;
+  const avgOrder = total ? Math.round(revenue / total) : 0;
+  const completionPct = total ? Math.round((100 * completedCount) / total) : 0;
+
+  const statusCounts: Record<BookingStatus, number> = {
+    Created: 0, Assigned: 0, Collected: 0, Processing: 0, Completed: 0,
+  };
+  for (const b of filtered) statusCounts[b.status] = (statusCounts[b.status] || 0) + 1;
+
+  const popularTests = useMemo(() => {
+    const counts = new Map<string, number>();
+    for (const b of filtered) {
+      for (const t of b.testNames ?? []) counts.set(t, (counts.get(t) ?? 0) + 1);
+    }
+    return Array.from(counts.entries())
+      .sort((a, b) => b[1] - a[1])
+      .slice(0, 7)
+      .map(([label, value]) => ({ label, value }));
+  }, [filtered]);
+
+  const popularSlots = useMemo(() => {
+    const counts = new Map<string, number>();
+    for (const b of filtered) {
+      const s = b.timeSlot;
+      if (s) counts.set(s, (counts.get(s) ?? 0) + 1);
+    }
+    return Array.from(counts.entries())
+      .sort((a, b) => b[1] - a[1])
+      .slice(0, 5)
+      .map(([label, value]) => ({ label, value }));
+  }, [filtered]);
+
+  // Last 7 days (Mon..Sun), IST-aware.
+  // We anchor the week to "today" — show the trailing 7-day window ending today.
+  const dailyBookings = useMemo(() => {
+    const days: { label: string; iso: string; count: number }[] = [];
+    for (let i = 6; i >= 0; i--) {
+      const iso = subDaysIso(today, i);
+      const [y, m, d] = iso.split('-').map(Number);
+      const weekday = new Date(Date.UTC(y, m - 1, d)).getUTCDay(); // 0=Sun
+      const label = WEEKDAY_SHORT[(weekday + 6) % 7]; // shift to Mon-first
+      const count = filtered.filter(b => (b.bookingDate ?? '') === iso).length;
+      days.push({ label, iso, count });
+    }
+    return days;
+  }, [filtered, today]);
+
+  const payment = useMemo(() => {
+    let upiCount = 0, upiSum = 0, cashCount = 0, cashSum = 0;
+    for (const b of filtered) {
+      const price = b.price ?? 0;
+      if (b.paymentMethod === 'UPI') { upiCount++; upiSum += price; }
+      else if (b.paymentMethod === 'Cash') { cashCount++; cashSum += price; }
+    }
+    return { upiCount, upiSum, cashCount, cashSum };
+  }, [filtered]);
+
+  return (
+    <div className="space-y-6">
+      {/* Header + range toggle */}
+      <div className="flex items-center justify-between gap-3 flex-wrap">
+        <h2 className="text-lg sm:text-xl font-bold text-[var(--color-text-primary)]">Analytics Overview</h2>
+        <div className="bg-slate-100 rounded-full p-1 flex">
+          {(['7', '30', 'all'] as const).map(r => (
+            <button
+              key={r}
+              onClick={() => setRange(r)}
+              className={cn(
+                "px-4 py-1.5 text-sm font-medium tracking-tight rounded-full transition-colors",
+                range === r
+                  ? "bg-white text-[var(--color-text-primary)] shadow-sm"
+                  : "text-[var(--color-text-secondary)] hover:text-[var(--color-text-primary)]"
+              )}
+            >
+              {r === '7' ? '7 Days' : r === '30' ? '30 Days' : 'All Time'}
+            </button>
+          ))}
+        </div>
+      </div>
+
+      {/* KPI grid */}
+      <div className="grid grid-cols-2 gap-3 sm:gap-4">
+        <KpiTile label="Revenue" value={`₹${revenue.toLocaleString()}`} tone="emerald" />
+        <KpiTile label="Bookings" value={total.toString()} subtitle={`${completedCount} completed`} tone="blue" />
+        <KpiTile label="Avg. Order" value={`₹${avgOrder.toLocaleString()}`} tone="purple" />
+        <KpiTile label="Completion" value={`${completionPct}%`} subtitle={`${completedCount}/${total}`} tone="teal" />
+      </div>
+
+      {/* Status breakdown */}
+      <AnalyticsCard title="Status Breakdown">
+        {total === 0 ? (
+          <EmptyMsg>No bookings in this range.</EmptyMsg>
+        ) : (
+          <>
+            <div className="flex h-3 rounded-full overflow-hidden bg-slate-100 mb-4">
+              {(['Created', 'Assigned', 'Collected', 'Processing', 'Completed'] as BookingStatus[]).map(s => {
+                const count = statusCounts[s];
+                if (count === 0) return null;
+                return (
+                  <div
+                    key={s}
+                    className={STATUS_COLORS[s].bg}
+                    style={{ width: `${(count / total) * 100}%` }}
+                    title={`${STATUS_COLORS[s].label}: ${count}`}
+                  />
+                );
+              })}
+            </div>
+            <div className="grid grid-cols-2 sm:grid-cols-5 gap-3">
+              {(['Created', 'Assigned', 'Collected', 'Processing', 'Completed'] as BookingStatus[]).map(s => (
+                <div key={s} className="flex items-center gap-2">
+                  <span className={cn("w-2.5 h-2.5 rounded-full shrink-0", STATUS_COLORS[s].dot)} />
+                  <div className="min-w-0">
+                    <div className="text-base font-bold text-[var(--color-text-primary)] leading-tight">{statusCounts[s]}</div>
+                    <div className="text-xs text-[var(--color-text-secondary)] leading-tight">{STATUS_COLORS[s].label}</div>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </>
+        )}
+      </AnalyticsCard>
+
+      {/* Most popular tests */}
+      <AnalyticsCard title="Most Popular Tests">
+        {popularTests.length === 0 ? (
+          <EmptyMsg>No tests booked in this range.</EmptyMsg>
+        ) : (
+          <HorizontalBars items={popularTests} barClass="bg-[var(--color-accent)]" />
+        )}
+      </AnalyticsCard>
+
+      {/* Daily bookings (last 7 days) */}
+      <AnalyticsCard title="Daily Bookings (Last 7 Days)">
+        <DailyBarsChart days={dailyBookings} />
+      </AnalyticsCard>
+
+      {/* Payment breakdown */}
+      <AnalyticsCard title="Payment Breakdown">
+        <div className="grid grid-cols-2 gap-3 sm:gap-4">
+          <PaymentTile method="UPI" count={payment.upiCount} amount={payment.upiSum} tone="blue" />
+          <PaymentTile method="Cash" count={payment.cashCount} amount={payment.cashSum} tone="orange" />
+        </div>
+      </AnalyticsCard>
+
+      {/* Popular time slots */}
+      <AnalyticsCard title="Popular Time Slots">
+        {popularSlots.length === 0 ? (
+          <EmptyMsg>No slots booked in this range.</EmptyMsg>
+        ) : (
+          <HorizontalBars items={popularSlots} barClass="bg-amber-400" />
+        )}
+      </AnalyticsCard>
+    </div>
+  );
+}
+
+// --- Analytics chart primitives ---
+
+function AnalyticsCard({ title, children }: { title: string; children: React.ReactNode }) {
+  return (
+    <div className="bg-[var(--color-surface)] rounded-[var(--radius-lg)] border border-[var(--color-border-subtle)] p-4 sm:p-5">
+      <h3 className="text-xs font-semibold uppercase tracking-[0.06em] text-[var(--color-text-secondary)] mb-4">{title}</h3>
+      {children}
+    </div>
+  );
+}
+
+function EmptyMsg({ children }: { children: React.ReactNode }) {
+  return <div className="text-sm text-[var(--color-text-tertiary)] italic py-2">{children}</div>;
+}
+
+type KpiTone = 'emerald' | 'blue' | 'purple' | 'teal';
+const KPI_TONE_CLASSES: Record<KpiTone, { box: string; label: string; value: string }> = {
+  emerald: { box: 'bg-emerald-50 border-emerald-200', label: 'text-emerald-700', value: 'text-emerald-900' },
+  blue:    { box: 'bg-blue-50 border-blue-200',       label: 'text-blue-700',    value: 'text-blue-900' },
+  purple:  { box: 'bg-purple-50 border-purple-200',   label: 'text-purple-700',  value: 'text-purple-900' },
+  teal:    { box: 'bg-teal-50 border-teal-200',       label: 'text-teal-700',    value: 'text-teal-900' },
+};
+
+function KpiTile({ label, value, subtitle, tone }: { label: string; value: string; subtitle?: string; tone: KpiTone }) {
+  const tc = KPI_TONE_CLASSES[tone];
+  return (
+    <div className={cn("rounded-[var(--radius-lg)] border p-4 sm:p-5", tc.box)}>
+      <div className={cn("text-xs font-semibold uppercase tracking-[0.06em] mb-1.5", tc.label)}>{label}</div>
+      <div className={cn("text-2xl sm:text-3xl font-bold tracking-tight", tc.value)}>{value}</div>
+      {subtitle && <div className={cn("text-xs mt-1", tc.label)}>{subtitle}</div>}
+    </div>
+  );
+}
+
+function HorizontalBars({ items, barClass }: { items: { label: string; value: number }[]; barClass: string }) {
+  const max = Math.max(1, ...items.map(i => i.value));
+  return (
+    <div className="space-y-2">
+      {items.map(({ label, value }) => (
+        <div key={label} className="flex items-center gap-3">
+          <div className="w-28 sm:w-32 text-sm text-[var(--color-text-secondary)] truncate text-right shrink-0" title={label}>{label}</div>
+          <div className="flex-1 h-7 bg-slate-100 rounded-full overflow-hidden relative">
+            <div
+              className={cn("h-full rounded-full transition-[width] duration-300 flex items-center justify-end pr-3", barClass)}
+              style={{ width: `${(value / max) * 100}%` }}
+            >
+              <span className="text-xs font-bold text-white tabular-nums">{value}</span>
+            </div>
+          </div>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function DailyBarsChart({ days }: { days: { label: string; iso: string; count: number }[] }) {
+  const max = Math.max(1, ...days.map(d => d.count));
+  return (
+    <div>
+      <div className="flex items-end justify-between gap-2 h-32 mb-2">
+        {days.map(d => (
+          <div key={d.iso} className="flex-1 flex flex-col items-center justify-end gap-1.5">
+            <div className="text-xs font-bold text-[var(--color-text-primary)] tabular-nums">{d.count}</div>
+            <div
+              className={cn(
+                "w-full max-w-[40px] rounded-t-md transition-[height] duration-300",
+                d.count > 0 ? "bg-emerald-500" : "bg-slate-100",
+              )}
+              style={{ height: `${Math.max(4, (d.count / max) * 100)}%` }}
+              title={`${d.label} (${d.iso}): ${d.count}`}
+            />
+          </div>
+        ))}
+      </div>
+      <div className="flex items-center justify-between gap-2">
+        {days.map(d => (
+          <div key={`label-${d.iso}`} className="flex-1 text-center text-xs text-[var(--color-text-secondary)]">{d.label}</div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function PaymentTile({ method, count, amount, tone }: { method: 'UPI' | 'Cash'; count: number; amount: number; tone: 'blue' | 'orange' }) {
+  const cls = tone === 'blue'
+    ? { box: 'bg-blue-50 border-blue-200', title: 'text-blue-700', value: 'text-blue-900', amount: 'text-blue-700' }
+    : { box: 'bg-orange-50 border-orange-200', title: 'text-orange-700', value: 'text-orange-900', amount: 'text-orange-700' };
+  return (
+    <div className={cn("rounded-[var(--radius-lg)] border p-4 sm:p-5", cls.box)}>
+      <div className={cn("text-xs font-semibold uppercase tracking-[0.06em] mb-1.5", cls.title)}>{method}</div>
+      <div className={cn("text-2xl sm:text-3xl font-bold tracking-tight", cls.value)}>{count}</div>
+      <div className={cn("text-sm font-medium mt-1 tabular-nums", cls.amount)}>₹{amount.toLocaleString()}</div>
+    </div>
+  );
 }
 
 // --- SCHEDULE VIEW ---
@@ -3561,6 +3863,7 @@ import {
   StaffRoute as StaffRouteAdmin,
   ScheduleRoute,
   SettingsRoute,
+  AnalyticsRoute,
 } from './routes/AdminDashboard';
 import { QueueRoute } from './routes/Queue';
 import { SimulatorRoute } from './routes/Simulator';
@@ -3583,6 +3886,7 @@ function AppContent() {
           <Route path="/staff" element={<StaffRouteAdmin />} />
           <Route path="/schedule" element={<ScheduleRoute />} />
           <Route path="/settings" element={<SettingsRoute />} />
+          <Route path="/analytics" element={<AnalyticsRoute />} />
           <Route path="/queue" element={<QueueRoute />} />
           <Route path="/simulator" element={<SimulatorRoute />} />
           <Route path="/me" element={<MyAccountRoute />} />

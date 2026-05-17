@@ -127,22 +127,51 @@ export function Sidebar({ collapsed, onToggleCollapse, onItemClick }: SidebarPro
             collapsed ? 'flex-col gap-1.5 p-1' : '',
           )}
         >
-          <div className="flex shrink-0 size-8 items-center justify-center rounded-full bg-[var(--color-sunken)] border border-[var(--color-border-subtle)] overflow-hidden text-[var(--color-text-secondary)]">
-            {user?.photoURL ? (
-              <img src={user.photoURL} alt="" referrerPolicy="no-referrer" className="size-full object-cover" />
-            ) : (
-              <UserIcon className="size-4" />
-            )}
-          </div>
-          {!collapsed && (
-            <div className="min-w-0 flex-1">
-              <div className="text-[12.5px] font-medium tracking-tight text-[var(--color-text-primary)] truncate">
-                {user?.displayName || user?.email?.split('@')[0] || 'Signed in'}
+          {(role === 'admin' || role === 'phlebotomist') ? (
+            <NavLink
+              to="/me"
+              onClick={onItemClick}
+              className="flex items-center gap-2 min-w-0 flex-1 rounded-[var(--radius-sm)] -mx-1 -my-0.5 px-1 py-0.5 hover:bg-[var(--color-sunken)] transition-colors"
+              title="My Account"
+            >
+              <div className="flex shrink-0 size-8 items-center justify-center rounded-full bg-[var(--color-sunken)] border border-[var(--color-border-subtle)] overflow-hidden text-[var(--color-text-secondary)]">
+                {user?.photoURL ? (
+                  <img src={user.photoURL} alt="" referrerPolicy="no-referrer" className="size-full object-cover" />
+                ) : (
+                  <UserIcon className="size-4" />
+                )}
               </div>
-              <div className="text-[11px] text-[var(--color-text-tertiary)] truncate capitalize">
-                {role ?? '—'}
+              {!collapsed && (
+                <div className="min-w-0 flex-1">
+                  <div className="text-[12.5px] font-medium tracking-tight text-[var(--color-text-primary)] truncate">
+                    {user?.displayName || user?.email?.split('@')[0] || 'Signed in'}
+                  </div>
+                  <div className="text-[11px] text-[var(--color-text-tertiary)] truncate capitalize">
+                    {role ?? '—'}
+                  </div>
+                </div>
+              )}
+            </NavLink>
+          ) : (
+            <>
+              <div className="flex shrink-0 size-8 items-center justify-center rounded-full bg-[var(--color-sunken)] border border-[var(--color-border-subtle)] overflow-hidden text-[var(--color-text-secondary)]">
+                {user?.photoURL ? (
+                  <img src={user.photoURL} alt="" referrerPolicy="no-referrer" className="size-full object-cover" />
+                ) : (
+                  <UserIcon className="size-4" />
+                )}
               </div>
-            </div>
+              {!collapsed && (
+                <div className="min-w-0 flex-1">
+                  <div className="text-[12.5px] font-medium tracking-tight text-[var(--color-text-primary)] truncate">
+                    {user?.displayName || user?.email?.split('@')[0] || 'Signed in'}
+                  </div>
+                  <div className="text-[11px] text-[var(--color-text-tertiary)] truncate capitalize">
+                    {role ?? '—'}
+                  </div>
+                </div>
+              )}
+            </>
           )}
           <IconButton label="Sign out" size="sm" variant="ghost" onClick={logout}>
             <LogOut className="size-4" />

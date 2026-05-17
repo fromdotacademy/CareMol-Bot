@@ -57,11 +57,13 @@ service cloud.firestore {
     }
 
     // Status transitions a phlebotomist is allowed to perform.
-    // Final Processing→Completed step is reserved for admins.
+    // Includes Processing→Completed so a phleb can close out a job without
+    // waiting on an admin. Admin retains the broader edit rule for overrides.
     function phlebStatusOK() {
       return (existing().status == 'Created' && incoming().status == 'Assigned') ||
              (existing().status == 'Assigned' && incoming().status == 'Collected') ||
              (existing().status == 'Collected' && incoming().status == 'Processing') ||
+             (existing().status == 'Processing' && incoming().status == 'Completed') ||
              (existing().status == incoming().status);
     }
 
@@ -129,7 +131,16 @@ service cloud.firestore {
 
     match /notifications/{notificationId} {
       allow read: if isSignedIn() && resource.data.userId == request.auth.uid;
-      allow write: if isAdmin();
+      // Admin may write any notification. A phlebotomist may only create a
+      // REPORT_READY notification for a booking they are assigned to — so that
+      // marking the job complete still notifies the customer without going
+      // through admin.
+      allow create: if isAdmin() || (
+        isPhlebotomist() &&
+        incoming().type == 'REPORT_READY' &&
+        get(/databases/$(database)/documents/bookings/$(incoming().bookingId)).data.assignedTo == request.auth.uid
+      );
+      allow update, delete: if isAdmin();
     }
 
     match /staff/{uid} {

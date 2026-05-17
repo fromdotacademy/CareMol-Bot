@@ -101,6 +101,7 @@ import {
 
 import { useStaffRole } from './hooks/useStaffRole';
 import { useBookingConfig } from './hooks/useBookingConfig';
+import { useOwnStaff } from './hooks/useOwnStaff';
 import { StatCard as UiStatCard } from './ui/StatCard';
 
 // --- Firestore Error Handling ---
@@ -2074,6 +2075,8 @@ export function PhlebotomistDashboard({ user, onError }: { user: FirebaseUser; o
   const [editingBookingId, setEditingBookingId] = useState<string | null>(null);
   const [showCompleted, setShowCompleted] = useState(false);
   const [newBookingOpen, setNewBookingOpen] = useState(false);
+  const config = useBookingConfig();
+  const { staff: ownStaff } = useOwnStaff(user);
 
   useEffect(() => {
     // Own assignments (any status)
@@ -2140,6 +2143,17 @@ export function PhlebotomistDashboard({ user, onError }: { user: FirebaseUser; o
   const transition = async (b: Booking, next: BookingStatus) => {
     try {
       await updateDoc(doc(db, 'bookings', b.bookingId), { status: next });
+      // Mirror the admin path: notify the customer when a booking is completed.
+      // Rule allows phleb-create of REPORT_READY only when assignedTo == self,
+      // which is always true here since this is the phleb's own queue card.
+      if (next === 'Completed' && b.userId) {
+        await addDoc(collection(db, 'notifications'), {
+          bookingId: b.bookingId,
+          userId: b.userId,
+          type: 'REPORT_READY',
+          createdAt: serverTimestamp(),
+        });
+      }
     } catch (e) {
       try { handleFirestoreError(e, OperationType.UPDATE, `bookings/${b.bookingId}`); }
       catch (err: any) { onError(err); }
@@ -2172,6 +2186,16 @@ export function PhlebotomistDashboard({ user, onError }: { user: FirebaseUser; o
     return sum + (computed || b.price || 0);
   }, 0);
 
+  // What's "in hand" for today: any own booking dated today whose status is
+  // Collected, Processing, or Completed — the sample has been taken so the
+  // money is effectively collected.
+  const collectedToday = myBookings.reduce((sum, b) => {
+    if (b.bookingDate !== todayISO) return sum;
+    if (b.status !== 'Collected' && b.status !== 'Processing' && b.status !== 'Completed') return sum;
+    const computed = computeBookingTotal(b.testNames || [], b.customTests, !!b.ecgAddon);
+    return sum + (computed || b.price || 0);
+  }, 0);
+
   return (
     <div className="space-y-6 sm:space-y-7">
       <div className="flex items-end justify-between gap-3">
@@ -2193,11 +2217,14 @@ export function PhlebotomistDashboard({ user, onError }: { user: FirebaseUser; o
         </button>
       </div>
 
-      <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 sm:gap-4">
+      <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 sm:gap-4">
         <StatCard title="Today's Assignments" value={active.length} icon={<Calendar className="w-5 h-5 text-blue-500" />} />
         <StatCard title="Unassigned Queue" value={unassigned.length} icon={<AlertTriangle className="w-5 h-5 text-amber-500" />} />
         <StatCard title="Expected Revenue" value={`₹${expectedRevenue.toLocaleString()}`} icon={<TrendingUp className="w-5 h-5 text-emerald-500" />} />
+        <StatCard title="Collected Today" value={`₹${collectedToday.toLocaleString()}`} icon={<CheckCircle className="w-5 h-5 text-emerald-600" />} />
       </div>
+
+      <MyScheduleWidget staff={ownStaff} config={config} />
 
       <section>
         <h3 className="text-[11px] font-medium text-[var(--color-text-secondary)] uppercase tracking-[0.06em] mb-3">
@@ -2217,6 +2244,7 @@ export function PhlebotomistDashboard({ user, onError }: { user: FirebaseUser; o
                 onEditTests={() => setEditingBookingId(b.bookingId)}
                 onMarkCollected={() => transition(b, 'Collected')}
                 onMarkProcessing={() => transition(b, 'Processing')}
+                onMarkCompleted={() => transition(b, 'Completed')}
               />
             ))}
           </div>
@@ -2277,6 +2305,61 @@ export function PhlebotomistDashboard({ user, onError }: { user: FirebaseUser; o
   );
 }
 
+function MyScheduleWidget({ staff, config }: { staff: Staff | null; config: BookingConfig }) {
+  if (!staff || !staff.defaultSchedule) return null;
+  const days: { key: keyof WeeklySchedule; label: string }[] = [
+    { key: 'mon', label: 'Mon' },
+    { key: 'tue', label: 'Tue' },
+    { key: 'wed', label: 'Wed' },
+    { key: 'thu', label: 'Thu' },
+    { key: 'fri', label: 'Fri' },
+    { key: 'sat', label: 'Sat' },
+    { key: 'sun', label: 'Sun' },
+  ];
+  return (
+    <section className="bg-[var(--color-surface)] border border-[var(--color-border-subtle)] rounded-[var(--radius-lg)] p-3 sm:p-4">
+      <div className="flex items-center justify-between mb-2">
+        <h3 className="text-[11px] font-medium text-[var(--color-text-secondary)] uppercase tracking-[0.06em]">
+          My Default Schedule
+        </h3>
+        <span className="text-[10px] text-[var(--color-text-secondary)]">Admin overrides apply per date</span>
+      </div>
+      <div className="grid grid-cols-7 gap-1.5 sm:gap-2">
+        {days.map(({ key, label }) => {
+          const phlebStarts = staff.defaultSchedule?.[key] ?? [];
+          const dayTemplate = config.slotsByWeekday?.[key] ?? config.slots;
+          const visible = dayTemplate.filter(s => phlebStarts.includes(s.start));
+          const off = visible.length === 0;
+          return (
+            <div
+              key={key}
+              className={cn(
+                "rounded-md border px-1.5 py-1.5 text-center min-h-[58px]",
+                off
+                  ? "bg-[var(--color-sunken)] border-[var(--color-border-subtle)] text-[var(--color-text-secondary)]"
+                  : "bg-[var(--color-surface)] border-[var(--color-border-subtle)]"
+              )}
+            >
+              <div className="text-[10px] font-semibold uppercase tracking-wider text-[var(--color-text-secondary)]">{label}</div>
+              {off ? (
+                <div className="text-[10px] mt-1 italic">Off</div>
+              ) : (
+                <div className="mt-1 space-y-0.5">
+                  {visible.map(s => (
+                    <div key={s.start} className="text-[9.5px] tabular-nums text-[var(--color-text-primary)] leading-tight">
+                      {formatSlotLabel(s)}
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          );
+        })}
+      </div>
+    </section>
+  );
+}
+
 function PhlebBookingCard({
   booking,
   mode,
@@ -2284,6 +2367,7 @@ function PhlebBookingCard({
   onEditTests,
   onMarkCollected,
   onMarkProcessing,
+  onMarkCompleted,
 }: {
   booking: Booking;
   mode: 'queue' | 'assigned' | 'completed';
@@ -2291,6 +2375,7 @@ function PhlebBookingCard({
   onEditTests?: () => void;
   onMarkCollected?: () => void;
   onMarkProcessing?: () => void;
+  onMarkCompleted?: () => void;
 }) {
   const priority = resolvePriority(booking);
   const mapsHref = booking.patientAddress
@@ -2420,9 +2505,12 @@ function PhlebBookingCard({
                 </button>
               )}
               {booking.status === 'Processing' && (
-                <span className="text-[11px] font-medium text-[var(--color-status-processing)] tracking-tight">
-                  Awaiting admin to mark Completed
-                </span>
+                <button
+                  onClick={onMarkCompleted}
+                  className="inline-flex items-center justify-center h-9 px-3 bg-[var(--color-status-completed)] text-white text-[12.5px] font-medium tracking-tight rounded-[var(--radius-md)] hover:opacity-90 transition-opacity"
+                >
+                  Mark Completed
+                </button>
               )}
             </>
           )}
@@ -3443,14 +3531,13 @@ export function WhatsAppSimulator({ userId }: { userId: string }) {
         {/* Input Area */}
         <footer className="p-2 border-t border-slate-200/50 flex items-center gap-2 bg-white/50 backdrop-blur-sm shrink-0">
           <div className="bg-white flex-1 rounded-full px-3 py-1.5 flex items-center shadow-sm border border-slate-200">
-            <input 
-              type="text" 
-              placeholder="Type message..."
-              disabled={!inputVisible}
+            <input
+              type="text"
+              placeholder={inputVisible ? "Type message..." : "Or tap a button above…"}
               value={inputText}
               onChange={(e) => setInputText(e.target.value)}
               onKeyDown={(e) => e.key === 'Enter' && inputText && (handleAction(inputText), setInputText(''))}
-              className="flex-1 bg-transparent border-none focus:ring-0 outline-none text-[11px] disabled:opacity-50"
+              className="flex-1 bg-transparent border-none focus:ring-0 outline-none text-[11px]"
             />
           </div>
         </footer>
@@ -3479,6 +3566,7 @@ import { QueueRoute } from './routes/Queue';
 import { SimulatorRoute } from './routes/Simulator';
 import { RootRedirect } from './routes/RootRedirect';
 import { ProtectedRoute } from './routes/ProtectedRoute';
+import { MyAccountRoute } from './routes/MyAccount';
 
 function AppContent() {
   const { dbError } = useErrorBoundary();
@@ -3497,6 +3585,7 @@ function AppContent() {
           <Route path="/settings" element={<SettingsRoute />} />
           <Route path="/queue" element={<QueueRoute />} />
           <Route path="/simulator" element={<SimulatorRoute />} />
+          <Route path="/me" element={<MyAccountRoute />} />
           <Route path="*" element={<RootRedirect />} />
         </Route>
       </Route>

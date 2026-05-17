@@ -14,6 +14,8 @@ import {
   signInWithEmailAndPassword,
   sendPasswordResetEmail,
   updatePassword,
+  reauthenticateWithCredential,
+  EmailAuthProvider,
   signOut,
   type User as FirebaseUser,
 } from 'firebase/auth';
@@ -34,7 +36,7 @@ interface AuthContextValue {
   loginWithGoogle: () => Promise<AuthResult>;
   loginWithEmail: (email: string, password: string) => Promise<AuthResult>;
   sendResetEmail: (email: string) => Promise<AuthResult>;
-  changePassword: (newPassword: string) => Promise<AuthResult>;
+  changePassword: (newPassword: string, currentPassword?: string) => Promise<AuthResult>;
   logout: () => Promise<void>;
 }
 
@@ -91,12 +93,26 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     }
   }, []);
 
-  const changePassword = useCallback(async (newPassword: string) => {
+  const changePassword = useCallback(async (newPassword: string, currentPassword?: string) => {
     if (newPassword.length < 6) {
       return { ok: false as const, error: 'Password must be at least 6 characters.' };
     }
     if (!auth.currentUser) {
       return { ok: false as const, error: 'Not signed in.' };
+    }
+    // If the caller supplied the current password, reauthenticate first so the
+    // updatePassword call below doesn't trip auth/requires-recent-login.
+    if (currentPassword && auth.currentUser.email) {
+      try {
+        const credential = EmailAuthProvider.credential(auth.currentUser.email, currentPassword);
+        await reauthenticateWithCredential(auth.currentUser, credential);
+      } catch (e: any) {
+        const code = e?.code as string | undefined;
+        if (code === 'auth/wrong-password' || code === 'auth/invalid-credential') {
+          return { ok: false as const, error: 'Current password is incorrect.' };
+        }
+        return { ok: false as const, error: toErrMsg(e) };
+      }
     }
     try {
       await updatePassword(auth.currentUser, newPassword);

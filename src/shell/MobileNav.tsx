@@ -1,6 +1,7 @@
 import { useEffect } from 'react';
 import { createPortal } from 'react-dom';
 import { NavLink } from 'react-router-dom';
+import { LogOut } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
 import { visibleNavItems } from './nav';
 import { cn } from '../ui';
@@ -11,7 +12,7 @@ interface MobileNavProps {
 }
 
 export function MobileNav({ open, onClose }: MobileNavProps) {
-  const { role } = useAuth();
+  const { role, user, logout } = useAuth();
   const items = visibleNavItems(role);
 
   useEffect(() => {
@@ -80,6 +81,21 @@ export function MobileNav({ open, onClose }: MobileNavProps) {
             );
           })}
         </ul>
+        <div className="border-t border-[var(--color-border-subtle)] p-2">
+          {user && (
+            <div className="px-3 py-1.5 text-[11px] text-[var(--color-text-tertiary)] truncate">
+              Signed in as <span className="text-[var(--color-text-secondary)] font-medium">{user.email || user.displayName || 'user'}</span>
+            </div>
+          )}
+          <button
+            type="button"
+            onClick={async () => { onClose(); await logout(); }}
+            className="w-full flex items-center gap-3 h-11 px-3 rounded-[var(--radius-md)] text-[14px] font-medium tracking-tight text-[var(--color-status-danger)] hover:bg-[var(--color-status-danger-bg)] transition-colors"
+          >
+            <LogOut className="size-[18px]" />
+            Sign out
+          </button>
+        </div>
       </nav>
     </div>,
     document.body,

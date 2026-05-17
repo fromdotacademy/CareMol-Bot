@@ -7,6 +7,7 @@ import {
   Settings as SettingsIcon,
   UsersRound,
   UserCog,
+  CircleUser,
 } from 'lucide-react';
 import type { ResolvedRole } from '../hooks/useStaffRole';
 
@@ -72,7 +73,7 @@ export const NAV_ITEMS: NavItem[] = [
     shortLabel: 'Simulator',
     icon: MessageSquare,
     group: 'tools',
-    roles: ['admin', 'phlebotomist', 'customer'],
+    roles: ['admin', 'customer'],
   },
   {
     to: '/settings',
@@ -80,6 +81,14 @@ export const NAV_ITEMS: NavItem[] = [
     icon: SettingsIcon,
     group: 'system',
     roles: ['admin'],
+  },
+  {
+    to: '/me',
+    label: 'My Account',
+    shortLabel: 'Account',
+    icon: CircleUser,
+    group: 'system',
+    roles: ['admin', 'phlebotomist'],
   },
 ];
 

@@ -1,8 +1,9 @@
-import { useState, type FormEvent } from 'react';
-import { Navigate } from 'react-router-dom';
+import { useMemo, useState, type FormEvent } from 'react';
+import { Navigate, useSearchParams } from 'react-router-dom';
 import { ArrowRight, AtSign, KeyRound, Loader2 } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
 import { Badge, Button, Input, cn } from '../ui';
+import { getHostMode, hostLabel } from '../lib/hostMode';
 
 export function SignInRoute() {
   const { user, isAuthReady, loginWithGoogle, loginWithEmail, sendResetEmail } = useAuth();
@@ -12,10 +13,34 @@ export function SignInRoute() {
   const [googleBusy, setGoogleBusy] = useState(false);
   const [info, setInfo] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [searchParams] = useSearchParams();
+  const hostMode = useMemo(() => getHostMode(), []);
+  const wrongHost = searchParams.get('wrongHost') === '1';
 
   if (isAuthReady && user) {
     return <Navigate to="/" replace />;
   }
+
+  const showGoogle = hostMode !== 'staff';
+  const showEmail = hostMode !== 'admin';
+  const headline =
+    hostMode === 'admin'
+      ? 'Admin sign-in'
+      : hostMode === 'staff'
+        ? 'Phlebotomist sign-in'
+        : 'Sign in to your dashboard';
+  const subheadline =
+    hostMode === 'admin'
+      ? 'Use your CareMol Google account.'
+      : hostMode === 'staff'
+        ? 'Enter the credentials your admin shared with you.'
+        : 'Manage bookings, schedule phlebotomists, and supervise the home-collection workflow.';
+  const wrongHostMessage =
+    hostMode === 'admin'
+      ? 'Your account is registered as phlebotomist. Please sign in at staff.caremol.in instead.'
+      : hostMode === 'staff'
+        ? 'Your account is registered as admin. Please sign in at admin.caremol.in instead.'
+        : 'Your account does not have access here. Please use the correct sign-in URL.';
 
   const onEmailSubmit = async (e: FormEvent) => {
     e.preventDefault();
@@ -66,39 +91,55 @@ export function SignInRoute() {
 
           <div>
             <h1 className="text-[26px] sm:text-[28px] font-semibold tracking-tight leading-[1.15] text-[var(--color-text-primary)]">
-              Sign in to your dashboard
+              {headline}
             </h1>
             <p className="mt-2 text-[14px] leading-relaxed text-[var(--color-text-secondary)]">
-              Manage bookings, schedule phlebotomists, and supervise the home-collection workflow.
+              {subheadline}
             </p>
+            {hostMode !== 'open' && (
+              <p className="mt-1 text-[12px] text-[var(--color-text-tertiary)] tabular-nums">
+                {hostLabel(hostMode)}
+              </p>
+            )}
           </div>
 
-          <Button
-            onClick={onGoogle}
-            loading={googleBusy}
-            iconLeft={
-              !googleBusy && (
-                <img
-                  src="https://www.gstatic.com/firebasejs/ui/2.0.0/images/auth/google.svg"
-                  alt=""
-                  className="size-4"
-                />
-              )
-            }
-            variant="outline"
-            size="lg"
-            fullWidth
-            className="font-medium"
-          >
-            Continue with Google
-          </Button>
+          {wrongHost && (
+            <div className="text-[12.5px] leading-relaxed text-[var(--color-status-danger)] bg-[var(--color-status-danger-bg)] border border-[var(--color-status-danger-ring)] rounded-[var(--radius-md)] px-3 py-2">
+              {wrongHostMessage}
+            </div>
+          )}
 
-          <div className="flex items-center gap-3 text-[11.5px] uppercase tracking-[0.08em] text-[var(--color-text-tertiary)]">
-            <span className="h-px flex-1 bg-[var(--color-border-subtle)]" />
-            or with email
-            <span className="h-px flex-1 bg-[var(--color-border-subtle)]" />
-          </div>
+          {showGoogle && (
+            <Button
+              onClick={onGoogle}
+              loading={googleBusy}
+              iconLeft={
+                !googleBusy && (
+                  <img
+                    src="https://www.gstatic.com/firebasejs/ui/2.0.0/images/auth/google.svg"
+                    alt=""
+                    className="size-4"
+                  />
+                )
+              }
+              variant="outline"
+              size="lg"
+              fullWidth
+              className="font-medium"
+            >
+              Continue with Google
+            </Button>
+          )}
 
+          {showGoogle && showEmail && (
+            <div className="flex items-center gap-3 text-[11.5px] uppercase tracking-[0.08em] text-[var(--color-text-tertiary)]">
+              <span className="h-px flex-1 bg-[var(--color-border-subtle)]" />
+              or with email
+              <span className="h-px flex-1 bg-[var(--color-border-subtle)]" />
+            </div>
+          )}
+
+          {showEmail && (
           <form className="flex flex-col gap-4" onSubmit={onEmailSubmit}>
             <Input
               label="Work email"
@@ -142,6 +183,7 @@ export function SignInRoute() {
               Sign in
             </Button>
           </form>
+          )}
 
           {info && (
             <Badge tone="completed" dot className="self-start">

@@ -314,10 +314,10 @@ test.describe('WhatsApp Simulator', () => {
     await page.waitForTimeout(800);
 
     const expectedOptions = [
-      /Book Home Sample Collection/,
-      /Medicine Delivery/,
-      /View Health Packages/,
-      /Talk to Support/,
+      /Home Sample Test/,
+      /Medicine/,
+      /View Packages/,
+      /Support/,
       /FAQ/,
       /Call CareMol/,
     ];
@@ -332,7 +332,7 @@ test.describe('WhatsApp Simulator', () => {
     await page.getByRole('button', { name: 'മലയാളം' }).first().click();
     await page.waitForTimeout(800);
     // Malayalam main menu option text from constants.ts
-    await expect(page.getByText(/ഹോം സാമ്പിൾ കളക്ഷൻ/i).first()).toBeVisible({ timeout: 5_000 });
+    await expect(page.getByText(/സാമ്പിൾ ബുക്ക്/i).first()).toBeVisible({ timeout: 5_000 });
   });
 
   test('FAQ option shows FAQ topics', async ({ page }) => {
@@ -357,7 +357,7 @@ test.describe('WhatsApp Simulator', () => {
     await ensureAtLanguageSelection(page);
     await page.getByRole('button', { name: 'English' }).first().click();
     await page.waitForTimeout(500);
-    await page.getByText(/Book Home Sample Collection/i).first().click();
+    await page.getByText(/Home Sample Test/i).first().click();
     await page.waitForTimeout(500);
 
     // Bot responds immediately with either:

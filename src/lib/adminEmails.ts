@@ -3,4 +3,5 @@
 export const HARDCODED_ADMIN_EMAILS = new Set<string>([
   'tubejaf@gmail.com',
   'fromdotacademy@gmail.com',
+  'caremol.in@gmail.com',
 ]);

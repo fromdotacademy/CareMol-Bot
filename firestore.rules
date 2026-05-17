@@ -17,7 +17,8 @@ service cloud.firestore {
     function isHardcodedAdmin() {
       return isSignedIn() && (
         request.auth.token.email == "fromdotacademy@gmail.com" ||
-        request.auth.token.email == "tubejaf@gmail.com"
+        request.auth.token.email == "tubejaf@gmail.com" ||
+        request.auth.token.email == "caremol.in@gmail.com"
       );
     }
 

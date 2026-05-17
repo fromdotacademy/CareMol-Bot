@@ -186,6 +186,24 @@ export function ErrorFallback({ error }: { error: Error }) {
   );
 }
 
+// --- MOBILE LIST CARD ---
+// Shared primitive for mobile-friendly list views (admin Bookings / Staff /
+// Schedule). Keeps padding, border, radius consistent across the three callsites.
+// Desktop keeps the existing tables — the mobile cards live under `sm:hidden`
+// while tables stay behind `hidden sm:block`.
+function MobileListCard({ children, className }: { children: React.ReactNode; className?: string }) {
+  return (
+    <div
+      className={cn(
+        "bg-[var(--color-surface)] border border-[var(--color-border-subtle)] rounded-[var(--radius-lg)] p-4 space-y-3 shadow-sm",
+        className
+      )}
+    >
+      {children}
+    </div>
+  );
+}
+
 // --- DASHBOARD VIEW ---
 
 export type AdminTab = 'bookings' | 'patients' | 'staff' | 'schedule' | 'settings';
@@ -515,13 +533,13 @@ export function DashboardView({ tab: tabProp, onTabChange, onError }: { tab?: Ad
             />
           </div>
 
-          <div className="flex items-center gap-1.5 overflow-x-auto pb-1 md:pb-0 scrollbar-none">
+          <div className="flex items-center gap-1.5 flex-wrap md:flex-nowrap md:overflow-x-auto pb-1 md:pb-0 scrollbar-none">
             {['All', 'Created', 'Assigned', 'Collected', 'Processing', 'Completed'].map(s => (
               <button
                 key={s}
                 onClick={() => setFilter(s as any)}
                 className={cn(
-                  "h-8 px-3 text-[12px] font-medium tracking-tight rounded-[var(--radius-sm)] border transition-colors whitespace-nowrap",
+                  "h-10 sm:h-9 px-4 sm:px-3 text-[13px] sm:text-[12px] font-medium tracking-tight rounded-[var(--radius-sm)] border transition-colors whitespace-nowrap",
                   filter === s
                     ? "bg-[var(--color-accent)] text-white border-[var(--color-accent)]"
                     : "bg-[var(--color-surface)] text-[var(--color-text-secondary)] border-[var(--color-border-subtle)] hover:bg-[var(--color-sunken)] hover:text-[var(--color-text-primary)]"
@@ -530,12 +548,12 @@ export function DashboardView({ tab: tabProp, onTabChange, onError }: { tab?: Ad
                 {s}
               </button>
             ))}
-            <div className="w-px h-5 bg-[var(--color-border-subtle)] mx-1" />
+            <div className="hidden md:block w-px h-5 bg-[var(--color-border-subtle)] mx-1" />
             <button
               onClick={() => setDateFilter(d => d === 'upcoming' ? 'all' : 'upcoming')}
               title={dateFilter === 'upcoming' ? 'Showing today + next ' + config.maxAdvanceDays + ' days. Click to show all.' : 'Showing all dates. Click to limit to upcoming.'}
               className={cn(
-                "inline-flex items-center gap-1.5 h-8 px-3 text-[12px] font-medium tracking-tight rounded-[var(--radius-sm)] border transition-colors whitespace-nowrap",
+                "inline-flex items-center gap-1.5 h-10 sm:h-9 px-4 sm:px-3 text-[13px] sm:text-[12px] font-medium tracking-tight rounded-[var(--radius-sm)] border transition-colors whitespace-nowrap",
                 dateFilter === 'upcoming'
                   ? "bg-[var(--color-status-assigned-bg)] text-[var(--color-status-assigned)] border-[var(--color-status-assigned-ring)]"
                   : "bg-[var(--color-surface)] text-[var(--color-text-secondary)] border-[var(--color-border-subtle)] hover:bg-[var(--color-sunken)] hover:text-[var(--color-text-primary)]"
@@ -547,8 +565,8 @@ export function DashboardView({ tab: tabProp, onTabChange, onError }: { tab?: Ad
           </div>
         </div>
 
-        {/* Enhanced Table */}
-        <div className="overflow-x-auto scroll-area">
+        {/* Desktop table (≥640px) */}
+        <div className="hidden sm:block overflow-x-auto scroll-area">
           <table className="w-full border-collapse min-w-[1024px]">
             <thead>
               <tr className="bg-[var(--color-sunken)] border-b border-[var(--color-border-subtle)]">
@@ -775,6 +793,202 @@ export function DashboardView({ tab: tabProp, onTabChange, onError }: { tab?: Ad
               )}
             </tbody>
           </table>
+        </div>
+
+        {/* Mobile card list (<640px) */}
+        <div className="sm:hidden p-3 space-y-3 bg-[var(--color-sunken)]">
+          {filteredBookings.length === 0 ? (
+            <div className="py-16 text-center flex flex-col items-center gap-2 text-text-muted">
+              <Search className="w-10 h-10 opacity-20" />
+              <p className="text-sm font-medium">No bookings found matching filters</p>
+            </div>
+          ) : filteredBookings.map(b => (
+            <MobileListCard key={b.bookingId}>
+              {/* Header: name + status */}
+              <div className="flex items-start justify-between gap-3">
+                <div className="min-w-0 flex-1">
+                  <div className="flex items-center gap-2 mb-0.5 flex-wrap">
+                    <span className="font-bold text-text-dark text-base truncate">{b.patientName}</span>
+                    <span className="text-[10px] bg-slate-200 px-2 py-0.5 rounded text-text-dark font-black tracking-tighter uppercase">
+                      {b.patientGender || 'N/A'} • {b.patientAge || '??'}
+                    </span>
+                  </div>
+                  <p className="text-xs text-text-muted flex items-center gap-1 font-medium">
+                    <Phone className="w-3.5 h-3.5" /> {b.patientPhone}
+                  </p>
+                </div>
+                <select
+                  value={b.status}
+                  onChange={(e) => updateStatus(b.bookingId, e.target.value as BookingStatus)}
+                  className={cn(
+                    "text-xs font-medium tracking-tight py-1.5 pl-3 pr-7 rounded-full cursor-pointer outline-none transition-colors appearance-none shrink-0",
+                    "bg-no-repeat bg-[right_0.5rem_center] bg-[length:10px]",
+                    getStatusStyle(b.status)
+                  )}
+                  style={{
+                    backgroundImage:
+                      "url(\"data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='2.4' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpolyline points='6 9 12 15 18 9'/%3E%3C/svg%3E\")",
+                  }}
+                >
+                  <option value="Created">Created</option>
+                  <option value="Assigned">Assigned</option>
+                  <option value="Collected">Collected</option>
+                  <option value="Processing">Processing</option>
+                  <option value="Completed">Completed</option>
+                </select>
+              </div>
+
+              {/* Tests + logistics */}
+              <div className="space-y-1.5 pt-2 border-t border-[var(--color-border-subtle)]">
+                <div className="flex items-start gap-2">
+                  <div className="w-2 h-2 rounded-full bg-primary mt-1.5 shrink-0" />
+                  <span className="text-sm font-bold text-text-dark uppercase tracking-tight">{(b.testNames || []).join(', ')}</span>
+                </div>
+                <div className="flex flex-wrap gap-x-3 gap-y-1 ml-4 text-xs">
+                  <span className="text-text-muted font-bold flex items-center gap-1">
+                    <Calendar className="w-3.5 h-3.5" />
+                    {b.bookingDate ? (
+                      <span className="text-text-dark">{formatDateLabel(b.bookingDate, 'en')}</span>
+                    ) : (
+                      <>
+                        <span className="text-text-muted">—</span>
+                        <span className="text-[10px] font-black bg-amber-100 text-amber-700 px-1.5 py-0.5 rounded uppercase tracking-widest">Legacy</span>
+                      </>
+                    )}
+                  </span>
+                  <span className="text-text-muted font-bold flex items-center gap-1">
+                    <Clock className="w-3.5 h-3.5" /> {b.timeSlot || '—'}
+                  </span>
+                  {b.isFastingConfirmed && (
+                    <span className="text-blue-600 font-bold flex items-center gap-1">
+                      <Activity className="w-3.5 h-3.5" /> Fasting
+                    </span>
+                  )}
+                </div>
+                {b.notes && (
+                  <div className="text-xs text-orange-700 font-bold flex items-start gap-1 bg-orange-50 px-2 py-1.5 rounded ml-4">
+                    <MessageSquare className="w-3.5 h-3.5 shrink-0 mt-0.5" /> {b.notes}
+                  </div>
+                )}
+                <div className="text-xs text-text-muted italic flex items-start gap-1 ml-4">
+                  <MapPin className="w-3.5 h-3.5 shrink-0 mt-0.5" />
+                  <span>{b.patientAddress}</span>
+                </div>
+              </div>
+
+              {/* Price + priority + assign */}
+              <div className="space-y-2 pt-2 border-t border-[var(--color-border-subtle)]">
+                <div className="flex items-center justify-between gap-2">
+                  <div className="text-lg font-black text-text-dark">₹{b.price || 0}</div>
+                  <select
+                    value={b.priority || ''}
+                    onChange={(e) => setPriority(b, e.target.value as any)}
+                    title="Override priority"
+                    className={cn(
+                      "text-[11px] font-bold uppercase tracking-widest py-1 px-2 rounded border-none cursor-pointer outline-none",
+                      getPriorityStyle(resolvePriority(b))
+                    )}
+                  >
+                    <option value="">Auto ({resolvePriority(b) || 'none'})</option>
+                    <option value="high">High</option>
+                    <option value="medium">Medium</option>
+                    <option value="low">Low</option>
+                  </select>
+                </div>
+                {(() => {
+                  const { phlebs: assignable, reason } = getAssignablePhlebs(b);
+                  const dropdownPhlebs = b.assignedTo && !assignable.find(p => p.uid === b.assignedTo)
+                    ? [...assignable, ...phlebotomists.filter(p => p.uid === b.assignedTo)]
+                    : assignable;
+                  return (
+                    <>
+                      <select
+                        value={b.assignedTo || ''}
+                        onChange={(e) => {
+                          const phleb = phlebotomists.find(p => p.uid === e.target.value) || null;
+                          assignBooking(b, phleb);
+                        }}
+                        title="Assign phlebotomist"
+                        className="w-full text-xs font-bold py-2 px-3 rounded-md border border-border-subtle bg-white cursor-pointer outline-none"
+                      >
+                        <option value="">Unassigned</option>
+                        {dropdownPhlebs.map(p => (
+                          <option key={p.uid} value={p.uid}>{p.name}</option>
+                        ))}
+                      </select>
+                      {reason === 'legacy' && (
+                        <div className="text-[11px] text-amber-700 italic">No date set — all phlebs shown</div>
+                      )}
+                      {reason === 'filtered' && assignable.length === 0 && (
+                        <button
+                          onClick={() => toggleAssignOverride(b.bookingId)}
+                          className="text-[11px] font-bold text-red-600 hover:underline"
+                        >
+                          No phlebs available — show all
+                        </button>
+                      )}
+                      {reason === 'filtered' && assignable.length > 0 && (
+                        <label className="flex items-center gap-1.5 text-[11px] text-text-muted cursor-pointer">
+                          <input
+                            type="checkbox"
+                            checked={false}
+                            onChange={() => toggleAssignOverride(b.bookingId)}
+                            className="w-4 h-4 accent-primary"
+                          />
+                          Show all (override filter)
+                        </label>
+                      )}
+                      {reason === 'override' && (
+                        <button
+                          onClick={() => toggleAssignOverride(b.bookingId)}
+                          className="text-[11px] font-bold text-primary hover:underline"
+                        >
+                          Re-filter to available
+                        </button>
+                      )}
+                    </>
+                  );
+                })()}
+              </div>
+
+              {/* Actions */}
+              <div className="flex items-center gap-2 pt-2 border-t border-[var(--color-border-subtle)]">
+                <button
+                  onClick={() => window.open(`tel:${b.patientPhone}`)}
+                  className="flex-1 inline-flex items-center justify-center gap-1.5 py-2.5 text-xs font-bold uppercase tracking-wider rounded-lg bg-slate-100 text-text-dark hover:bg-slate-200 transition-colors"
+                >
+                  <Phone className="w-4 h-4" /> Call
+                </button>
+                {b.patientId && (
+                  <button
+                    onClick={() => openPatient(b.patientId)}
+                    className="flex-1 inline-flex items-center justify-center gap-1.5 py-2.5 text-xs font-bold uppercase tracking-wider rounded-lg bg-slate-100 text-text-dark hover:bg-slate-200 transition-colors"
+                  >
+                    <User className="w-4 h-4" /> Profile
+                  </button>
+                )}
+                <button
+                  onClick={() => setEditingBookingId(b.bookingId)}
+                  className="flex-1 inline-flex items-center justify-center gap-1.5 py-2.5 text-xs font-bold uppercase tracking-wider rounded-lg bg-slate-100 text-text-dark hover:bg-primary hover:text-white transition-colors"
+                >
+                  Edit Tests
+                </button>
+              </div>
+              {b.status === 'Processing' && (
+                <button
+                  onClick={() => updateStatus(b.bookingId, 'Completed')}
+                  className="w-full inline-flex items-center justify-center gap-2 py-3 bg-primary text-white text-sm font-bold uppercase tracking-wider rounded-lg shadow-lg shadow-primary/20 hover:opacity-90 transition-opacity"
+                >
+                  <FileUp className="w-4 h-4" /> Upload Report
+                </button>
+              )}
+              {b.status === 'Completed' && (
+                <div className="flex items-center justify-center gap-1.5 py-2 text-xs font-bold text-emerald-600 uppercase tracking-widest bg-emerald-50 rounded-lg">
+                  <CheckCircle2 className="w-4 h-4" /> Report Sent
+                </div>
+              )}
+            </MobileListCard>
+          ))}
         </div>
       </div>
       )}
@@ -1134,7 +1348,8 @@ function StaffView({ staff, config, onError }: { staff: Staff[]; config: Booking
         </div>
       )}
 
-      <div className="overflow-x-auto scroll-area">
+      {/* Desktop table (≥640px) */}
+      <div className="hidden sm:block overflow-x-auto scroll-area">
         <table className="w-full min-w-[640px]">
           <thead>
             <tr className="bg-[var(--color-sunken)] border-b border-[var(--color-border-subtle)]">
@@ -1220,6 +1435,85 @@ function StaffView({ staff, config, onError }: { staff: Staff[]; config: Booking
           ))}
         </tbody>
       </table>
+      </div>
+
+      {/* Mobile card list (<640px) */}
+      <div className="sm:hidden p-3 space-y-3 bg-[var(--color-sunken)]">
+        {staff.length === 0 ? (
+          <div className="py-10 text-center text-text-muted text-sm">No staff records yet. Add one to get started.</div>
+        ) : staff.map(s => (
+          <React.Fragment key={s.uid}>
+            <MobileListCard>
+              {/* Header: name + active toggle */}
+              <div className="flex items-start justify-between gap-3">
+                <div className="min-w-0 flex-1">
+                  <div className="font-bold text-text-dark text-base mb-1">{s.name}</div>
+                  <span className={cn(
+                    "text-[10px] font-black uppercase tracking-widest px-2 py-0.5 rounded inline-block",
+                    s.role === 'admin' ? 'bg-purple-100 text-purple-700' : 'bg-blue-100 text-blue-700'
+                  )}>
+                    {s.role}
+                  </span>
+                </div>
+                <button
+                  onClick={() => toggleActive(s)}
+                  className={cn(
+                    "text-xs font-bold uppercase tracking-wider px-3 py-1.5 rounded-full transition-colors shrink-0",
+                    s.active ? "bg-emerald-100 text-emerald-700 hover:bg-emerald-200" : "bg-slate-100 text-slate-500 hover:bg-slate-200"
+                  )}
+                >
+                  {s.active ? 'Active' : 'Inactive'}
+                </button>
+              </div>
+
+              {/* Contact */}
+              <div className="space-y-1 text-sm pt-2 border-t border-[var(--color-border-subtle)]">
+                <div className="text-text-dark break-all">{s.email}</div>
+                {s.phone && <div className="text-xs font-mono text-text-muted">{s.phone}</div>}
+                <details className="text-xs">
+                  <summary className="cursor-pointer text-text-muted font-medium">UID</summary>
+                  <div className="text-[11px] font-mono text-text-muted break-all mt-1">{s.uid}</div>
+                </details>
+              </div>
+
+              {/* Edit schedule (phlebs only) */}
+              {s.role === 'phlebotomist' && (
+                <button
+                  onClick={() => startEditingSchedule(s)}
+                  className="w-full inline-flex items-center justify-center py-2.5 text-xs font-bold uppercase tracking-wider rounded-lg bg-slate-100 text-text-dark hover:bg-slate-200 transition-colors"
+                >
+                  {editingScheduleUid === s.uid ? 'Editing Schedule…' : 'Edit Schedule'}
+                </button>
+              )}
+            </MobileListCard>
+
+            {/* Inline schedule editor (mobile) */}
+            {editingScheduleUid === s.uid && (
+              <MobileListCard className="bg-blue-50/40">
+                <DefaultScheduleEditor
+                  value={editingScheduleDraft}
+                  config={config}
+                  onChange={setEditingScheduleDraft}
+                />
+                <div className="flex items-center justify-end gap-2 mt-3">
+                  <button
+                    onClick={() => setEditingScheduleUid(null)}
+                    className="px-3 py-2 text-xs font-bold uppercase tracking-wider rounded-lg border border-border-subtle text-text-muted hover:bg-white transition-colors"
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    onClick={() => saveSchedule(s.uid)}
+                    disabled={savingSchedule}
+                    className="px-3 py-2 text-xs font-bold uppercase tracking-wider rounded-lg bg-primary text-white hover:opacity-90 transition-opacity disabled:opacity-50"
+                  >
+                    {savingSchedule ? 'Saving…' : 'Save Schedule'}
+                  </button>
+                </div>
+              </MobileListCard>
+            )}
+          </React.Fragment>
+        ))}
       </div>
     </div>
   );
@@ -1950,7 +2244,8 @@ function ScheduleView({
         </div>
       </div>
 
-      <div className="overflow-x-auto scroll-area">
+      {/* Desktop grid (≥640px) */}
+      <div className="hidden sm:block overflow-x-auto scroll-area">
         <table className="w-full min-w-[720px]">
           <thead>
             <tr className="bg-[var(--color-sunken)] border-b border-[var(--color-border-subtle)]">
@@ -2064,6 +2359,130 @@ function ScheduleView({
             })}
           </tbody>
         </table>
+      </div>
+
+      {/* Mobile card list (<640px) */}
+      <div className="sm:hidden p-3 space-y-3 bg-[var(--color-sunken)]">
+        {activePhlebs.length === 0 ? (
+          <div className="py-10 text-center text-text-muted text-sm">
+            No active phlebotomists. Add one in the Staff tab.
+          </div>
+        ) : activePhlebs.map(p => {
+          const override = overrides[p.uid] ?? null;
+          const effective = effectiveSlotsFromDocs(p, override, selectedDate);
+          const dayOff = override?.unavailable === true;
+          return (
+            <MobileListCard key={p.uid}>
+              {/* Header: name + override badge */}
+              <div className="flex items-start justify-between gap-3">
+                <div className="min-w-0 flex-1">
+                  <div className="font-bold text-text-dark text-base">{p.name}</div>
+                  <div className="text-xs text-text-muted mt-0.5">
+                    {override ? (
+                      <span className="text-amber-700 font-bold">Override active</span>
+                    ) : (
+                      <span>Using default ({weekdayKey(selectedDate)})</span>
+                    )}
+                  </div>
+                </div>
+                {dayOff && (
+                  <span className="text-[11px] font-black bg-red-100 text-red-700 px-2 py-1 rounded uppercase tracking-widest shrink-0">
+                    Day off
+                  </span>
+                )}
+              </div>
+
+              {/* Slot grid */}
+              <div className="pt-2 border-t border-[var(--color-border-subtle)]">
+                <div className="text-[11px] font-medium text-text-muted uppercase tracking-widest mb-2">Slots</div>
+                <div className="grid grid-cols-3 gap-2">
+                  {dateSlots.map(s => {
+                    const isOn = !dayOff && effective.includes(s.start);
+                    const conflict = isOn ? bookingAt(p.uid, s.start) : null;
+                    return (
+                      <button
+                        key={s.start}
+                        onClick={() => toggleSlot(p, s.start)}
+                        disabled={dayOff}
+                        title={conflict ? `Booking ${conflict.bookingId} assigned here` : isOn ? 'Working — tap to remove' : 'Off — tap to add'}
+                        className={cn(
+                          "flex flex-col items-center justify-center gap-1 py-2 px-1 rounded-md border-2 transition-colors text-[11px] font-medium tabular-nums",
+                          dayOff
+                            ? "border-slate-200 bg-slate-100 text-slate-300 cursor-not-allowed"
+                            : isOn
+                              ? conflict
+                                ? "border-amber-400 bg-amber-50 text-amber-700"
+                                : "border-emerald-500 bg-emerald-50 text-emerald-700 hover:bg-emerald-100"
+                              : "border-border-subtle bg-white text-text-muted hover:bg-slate-50"
+                        )}
+                      >
+                        <span>{formatSlotLabel(s)}</span>
+                        {isOn && <CheckCircle className="w-3.5 h-3.5" />}
+                      </button>
+                    );
+                  })}
+                </div>
+
+                {offTemplateSlotStarts.length > 0 && (
+                  <>
+                    <div className="text-[11px] font-medium text-[var(--color-status-created)] uppercase tracking-widest mt-3 mb-2">Off-template</div>
+                    <div className="grid grid-cols-3 gap-2">
+                      {offTemplateSlotStarts.map(start => {
+                        const conflict = bookingAt(p.uid, start);
+                        return (
+                          <div
+                            key={`off-${p.uid}-${start}`}
+                            className={cn(
+                              "flex flex-col items-center justify-center gap-1 py-2 px-1 rounded-md border-2 text-[11px] font-medium tabular-nums",
+                              conflict
+                                ? "border-amber-400 bg-amber-50 text-amber-700"
+                                : "border-border-subtle bg-white text-text-muted"
+                            )}
+                            title={conflict ? `Booking ${conflict.bookingId}` : undefined}
+                          >
+                            <span>{start}</span>
+                            {conflict ? <CheckCircle className="w-3.5 h-3.5" /> : <span>—</span>}
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </>
+                )}
+              </div>
+
+              {/* Actions */}
+              <div className="flex items-center gap-2 pt-2 border-t border-[var(--color-border-subtle)]">
+                {dayOff ? (
+                  override && (
+                    <button
+                      onClick={() => resetToDefault(p)}
+                      className="flex-1 py-2.5 text-xs font-bold uppercase tracking-wider rounded-lg bg-slate-100 text-primary hover:bg-slate-200 transition-colors"
+                    >
+                      Reset to default
+                    </button>
+                  )
+                ) : (
+                  <>
+                    <button
+                      onClick={() => markDayOff(p)}
+                      className="flex-1 py-2.5 text-xs font-bold uppercase tracking-wider rounded-lg bg-red-50 text-red-700 hover:bg-red-100 transition-colors"
+                    >
+                      Day off
+                    </button>
+                    {override && (
+                      <button
+                        onClick={() => resetToDefault(p)}
+                        className="flex-1 py-2.5 text-xs font-bold uppercase tracking-wider rounded-lg bg-slate-100 text-primary hover:bg-slate-200 transition-colors"
+                      >
+                        Reset
+                      </button>
+                    )}
+                  </>
+                )}
+              </div>
+            </MobileListCard>
+          );
+        })}
       </div>
     </div>
   );

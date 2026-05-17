@@ -9,7 +9,7 @@
     "build": "vite build && node scripts/build-api.mjs",
     "preview": "vite preview",
     "clean": "rm -rf dist",
-    "lint": "tsc --noEmit"
+    "lint": "tsc --noEmit && tsx scripts/check-button-limits.ts"
   },
   "dependencies": {
     "@google/genai": "^1.29.0",

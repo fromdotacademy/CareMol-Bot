@@ -27,7 +27,7 @@ async function ensureAtLanguageSelection(page: Page) {
 async function startInEnglish(page: Page) {
   await ensureAtLanguageSelection(page);
   await page.getByRole('button', { name: 'English' }).first().click();
-  await expect(page.getByText(/View Health Packages/).first()).toBeVisible({ timeout: 5_000 });
+  await expect(page.getByText(/View Packages/).first()).toBeVisible({ timeout: 5_000 });
 }
 
 // The simulator wraps its state machine in setTimeout(_, 500), so we wait
@@ -52,7 +52,7 @@ test.describe('Package Browse (PACKAGE_VIEW)', () => {
   test.beforeEach(async ({ page }) => {
     await navigateToDashboard(page);
     await startInEnglish(page);
-    await clickLatestButton(page, /View Health Packages/);
+    await clickLatestButton(page, /View Packages/);
   });
 
   test('shows all 6 bookable packages from poster', async ({ page }) => {
@@ -82,7 +82,7 @@ test.describe('Package Detail View', () => {
   test.beforeEach(async ({ page }) => {
     await navigateToDashboard(page);
     await startInEnglish(page);
-    await clickLatestButton(page, /View Health Packages/);
+    await clickLatestButton(page, /View Packages/);
   });
 
   test('Basic Health: MRP, savings, tagline, included tests, ECG add-on, 2 months pickup', async ({ page }) => {
@@ -141,7 +141,7 @@ test.describe('Family Plan Branch', () => {
   test.beforeEach(async ({ page }) => {
     await navigateToDashboard(page);
     await startInEnglish(page);
-    await clickLatestButton(page, /View Health Packages/);
+    await clickLatestButton(page, /View Packages/);
   });
 
   test('Family Basic shows phone-consultation prompt instead of Book Now', async ({ page }) => {
@@ -172,7 +172,7 @@ test.describe('Malayalam Package Names', () => {
     await ensureAtLanguageSelection(page);
     await page.getByRole('button', { name: 'മലയാളം' }).first().click();
     await page.waitForTimeout(700);
-    await clickLatestButton(page, /ഹെൽത്ത് പാക്കേജുകൾ/);
+    await clickLatestButton(page, /പാക്കേജുകൾ/);
     await expect(page.getByRole('button', { name: 'ബേസിക് ഹെൽത്ത്', exact: true }).last()).toBeVisible({ timeout: 5_000 });
     await expect(page.getByRole('button', { name: 'സ്മാർട്ട് കെയർ', exact: true }).last()).toBeVisible();
     await expect(page.getByRole('button', { name: 'ഡയബറ്റീസ് കെയർ', exact: true }).last()).toBeVisible();

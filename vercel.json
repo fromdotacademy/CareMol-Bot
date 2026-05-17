@@ -6,6 +6,6 @@
     { "source": "/(.*)", "destination": "/index.html" }
   ],
   "functions": {
-    "api/index.ts": { "maxDuration": 30, "includeFiles": "src/**,server.ts" }
+    "api/index.js": { "maxDuration": 30, "includeFiles": "firebase-applet-config.json" }
   }
 }

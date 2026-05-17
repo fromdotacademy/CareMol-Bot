@@ -3,6 +3,7 @@ import {
   CalendarDays,
   ClipboardList,
   LayoutDashboard,
+  LineChart,
   MessageSquare,
   Settings as SettingsIcon,
   UsersRound,
@@ -65,6 +66,13 @@ export const NAV_ITEMS: NavItem[] = [
     label: 'Staff',
     icon: UserCog,
     group: 'people',
+    roles: ['admin'],
+  },
+  {
+    to: '/analytics',
+    label: 'Analytics',
+    icon: LineChart,
+    group: 'tools',
     roles: ['admin'],
   },
   {

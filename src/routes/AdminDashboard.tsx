@@ -9,6 +9,7 @@ const TAB_TO_PATH: Record<AdminTab, string> = {
   staff: '/staff',
   schedule: '/schedule',
   settings: '/settings',
+  analytics: '/analytics',
 };
 
 function useTabNavigator() {
@@ -40,4 +41,7 @@ export function ScheduleRoute() {
 }
 export function SettingsRoute() {
   return <AdminRoute tab="settings" />;
+}
+export function AnalyticsRoute() {
+  return <AdminRoute tab="analytics" />;
 }

@@ -436,7 +436,7 @@ export function DashboardView({ tab: tabProp, onTabChange, onError }: { tab?: Ad
             <h1 className="text-[22px] sm:text-[26px] font-semibold tracking-tight leading-[1.2] text-[var(--color-text-primary)] capitalize">
               {tab}
             </h1>
-            <p className="mt-0.5 text-[13px] text-[var(--color-text-secondary)]">
+            <p className="mt-0.5 text-sm text-[var(--color-text-secondary)]">
               {tab === 'bookings' && `${stats.total} total · ${stats.pending} need action`}
               {tab === 'patients' && `${patients.length} patients in directory`}
               {tab === 'staff' && `${staff.length} staff members`}
@@ -446,7 +446,7 @@ export function DashboardView({ tab: tabProp, onTabChange, onError }: { tab?: Ad
           </div>
           <button
             onClick={() => setNewBookingOpen(true)}
-            className="inline-flex items-center gap-1.5 h-10 px-3.5 sm:px-4 rounded-[var(--radius-md)] bg-[var(--color-accent)] text-white text-[13px] font-medium tracking-tight hover:bg-[var(--color-accent-hover)] transition-colors shrink-0"
+            className="inline-flex items-center gap-1.5 h-10 px-3.5 sm:px-4 rounded-[var(--radius-md)] bg-[var(--color-accent)] text-white text-sm font-medium tracking-tight hover:bg-[var(--color-accent-hover)] transition-colors shrink-0"
           >
             <Plus className="w-4 h-4" />
             <span className="hidden sm:inline">New Booking</span>
@@ -529,7 +529,7 @@ export function DashboardView({ tab: tabProp, onTabChange, onError }: { tab?: Ad
               placeholder="Search patient name or phone…"
               value={searchTerm}
               onChange={(e) => setSearchTerm(e.target.value)}
-              className="bg-transparent border-none text-[13.5px] outline-none w-full text-[var(--color-text-primary)] placeholder:text-[var(--color-text-tertiary)]"
+              className="bg-transparent border-none text-sm outline-none w-full text-[var(--color-text-primary)] placeholder:text-[var(--color-text-tertiary)]"
             />
           </div>
 
@@ -539,7 +539,7 @@ export function DashboardView({ tab: tabProp, onTabChange, onError }: { tab?: Ad
                 key={s}
                 onClick={() => setFilter(s as any)}
                 className={cn(
-                  "h-10 sm:h-9 px-4 sm:px-3 text-[13px] sm:text-[12px] font-medium tracking-tight rounded-[var(--radius-sm)] border transition-colors whitespace-nowrap",
+                  "h-10 sm:h-9 px-4 sm:px-3 text-sm font-medium tracking-tight rounded-[var(--radius-sm)] border transition-colors whitespace-nowrap",
                   filter === s
                     ? "bg-[var(--color-accent)] text-white border-[var(--color-accent)]"
                     : "bg-[var(--color-surface)] text-[var(--color-text-secondary)] border-[var(--color-border-subtle)] hover:bg-[var(--color-sunken)] hover:text-[var(--color-text-primary)]"
@@ -553,7 +553,7 @@ export function DashboardView({ tab: tabProp, onTabChange, onError }: { tab?: Ad
               onClick={() => setDateFilter(d => d === 'upcoming' ? 'all' : 'upcoming')}
               title={dateFilter === 'upcoming' ? 'Showing today + next ' + config.maxAdvanceDays + ' days. Click to show all.' : 'Showing all dates. Click to limit to upcoming.'}
               className={cn(
-                "inline-flex items-center gap-1.5 h-10 sm:h-9 px-4 sm:px-3 text-[13px] sm:text-[12px] font-medium tracking-tight rounded-[var(--radius-sm)] border transition-colors whitespace-nowrap",
+                "inline-flex items-center gap-1.5 h-10 sm:h-9 px-4 sm:px-3 text-sm font-medium tracking-tight rounded-[var(--radius-sm)] border transition-colors whitespace-nowrap",
                 dateFilter === 'upcoming'
                   ? "bg-[var(--color-status-assigned-bg)] text-[var(--color-status-assigned)] border-[var(--color-status-assigned-ring)]"
                   : "bg-[var(--color-surface)] text-[var(--color-text-secondary)] border-[var(--color-border-subtle)] hover:bg-[var(--color-sunken)] hover:text-[var(--color-text-primary)]"
@@ -570,11 +570,11 @@ export function DashboardView({ tab: tabProp, onTabChange, onError }: { tab?: Ad
           <table className="w-full border-collapse min-w-[1024px]">
             <thead>
               <tr className="bg-[var(--color-sunken)] border-b border-[var(--color-border-subtle)]">
-                <th className="text-left py-2.5 px-4 sm:px-5 text-[11px] font-medium text-[var(--color-text-secondary)] uppercase tracking-[0.06em]">Patient</th>
-                <th className="text-left py-2.5 px-4 sm:px-5 text-[11px] font-medium text-[var(--color-text-secondary)] uppercase tracking-[0.06em]">Tests &amp; Logistics</th>
-                <th className="text-left py-2.5 px-4 sm:px-5 text-[11px] font-medium text-[var(--color-text-secondary)] uppercase tracking-[0.06em]">Revenue</th>
-                <th className="text-left py-2.5 px-4 sm:px-5 text-[11px] font-medium text-[var(--color-text-secondary)] uppercase tracking-[0.06em]">Status</th>
-                <th className="text-right py-2.5 px-4 sm:px-5 text-[11px] font-medium text-[var(--color-text-secondary)] uppercase tracking-[0.06em]">Actions</th>
+                <th className="text-left py-2.5 px-4 sm:px-5 text-sm font-medium text-[var(--color-text-secondary)] uppercase tracking-[0.06em]">Patient</th>
+                <th className="text-left py-2.5 px-4 sm:px-5 text-sm font-medium text-[var(--color-text-secondary)] uppercase tracking-[0.06em]">Tests &amp; Logistics</th>
+                <th className="text-left py-2.5 px-4 sm:px-5 text-sm font-medium text-[var(--color-text-secondary)] uppercase tracking-[0.06em]">Revenue</th>
+                <th className="text-left py-2.5 px-4 sm:px-5 text-sm font-medium text-[var(--color-text-secondary)] uppercase tracking-[0.06em]">Status</th>
+                <th className="text-right py-2.5 px-4 sm:px-5 text-sm font-medium text-[var(--color-text-secondary)] uppercase tracking-[0.06em]">Actions</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-border-subtle">
@@ -588,11 +588,11 @@ export function DashboardView({ tab: tabProp, onTabChange, onError }: { tab?: Ad
                       <div>
                         <div className="flex items-center gap-2 mb-0.5">
                           <span className="font-bold text-text-dark text-sm">{b.patientName}</span>
-                          <span className="text-[9px] bg-slate-200 px-2 py-0.5 rounded text-text-dark font-black tracking-tighter uppercase">
+                          <span className="text-sm bg-slate-200 px-2 py-0.5 rounded text-text-dark font-black tracking-tighter uppercase">
                             {b.patientGender || 'N/A'} • {b.patientAge || '??'}
                           </span>
                         </div>
-                        <p className="text-[10px] text-text-muted flex items-center gap-1 font-medium">
+                        <p className="text-xs text-text-muted flex items-center gap-1 font-medium">
                           <Phone className="w-3 h-3" /> {b.patientPhone}
                         </p>
                       </div>
@@ -605,31 +605,31 @@ export function DashboardView({ tab: tabProp, onTabChange, onError }: { tab?: Ad
                         <span className="text-xs font-bold text-text-dark uppercase tracking-tight">{(b.testNames || []).join(', ')}</span>
                       </div>
                       <div className="flex flex-col gap-0.5 ml-4">
-                        <span className="text-[10px] text-text-muted font-bold flex items-center gap-1">
+                        <span className="text-xs text-text-muted font-bold flex items-center gap-1">
                           <Calendar className="w-3 h-3" />
                           {b.bookingDate ? (
                             <span className="text-text-dark">{formatDateLabel(b.bookingDate, 'en')}</span>
                           ) : (
                             <>
                               <span className="text-text-muted">—</span>
-                              <span className="text-[9px] font-black bg-amber-100 text-amber-700 px-1 py-0.5 rounded uppercase tracking-widest">Legacy</span>
+                              <span className="text-sm font-black bg-amber-100 text-amber-700 px-1 py-0.5 rounded uppercase tracking-widest">Legacy</span>
                             </>
                           )}
                         </span>
-                        <span className="text-[10px] text-text-muted font-bold flex items-center gap-1">
+                        <span className="text-xs text-text-muted font-bold flex items-center gap-1">
                           <Clock className="w-3 h-3" /> {b.timeSlot || '—'}
                         </span>
                         {b.isFastingConfirmed && (
-                           <span className="text-[9px] text-blue-600 font-bold flex items-center gap-1">
+                           <span className="text-sm text-blue-600 font-bold flex items-center gap-1">
                              <Activity className="w-3 h-3" /> Requires Fasting
                            </span>
                         )}
                         {b.notes && (
-                           <span className="text-[9px] text-orange-600 font-bold flex items-center gap-1 bg-orange-50 px-1 py-0.5 rounded">
+                           <span className="text-sm text-orange-600 font-bold flex items-center gap-1 bg-orange-50 px-1 py-0.5 rounded">
                              <MessageSquare className="w-3 h-3" /> Note: {b.notes}
                            </span>
                         )}
-                        <div className="text-[10px] text-text-muted italic flex items-center gap-1">
+                        <div className="text-xs text-text-muted italic flex items-center gap-1">
                           <MapPin className="w-3 h-3 shrink-0" />
                           <span className="line-clamp-1">{b.patientAddress}</span>
                         </div>
@@ -644,7 +644,7 @@ export function DashboardView({ tab: tabProp, onTabChange, onError }: { tab?: Ad
                         onChange={(e) => setPriority(b, e.target.value as any)}
                         title="Override priority"
                         className={cn(
-                          "text-[9px] font-bold uppercase tracking-widest py-0.5 px-2 rounded border-none cursor-pointer outline-none",
+                          "text-sm font-bold uppercase tracking-widest py-0.5 px-2 rounded border-none cursor-pointer outline-none",
                           getPriorityStyle(resolvePriority(b))
                         )}
                       >
@@ -654,7 +654,7 @@ export function DashboardView({ tab: tabProp, onTabChange, onError }: { tab?: Ad
                         <option value="low">Low</option>
                       </select>
                       {b.isFastingConfirmed && (
-                         <span className="text-[9px] bg-blue-100 text-blue-600 px-2 py-0.5 rounded font-bold uppercase block w-fit">Fasting</span>
+                         <span className="text-sm bg-blue-100 text-blue-600 px-2 py-0.5 rounded font-bold uppercase block w-fit">Fasting</span>
                       )}
                     </div>
                   </td>
@@ -664,7 +664,7 @@ export function DashboardView({ tab: tabProp, onTabChange, onError }: { tab?: Ad
                         value={b.status}
                         onChange={(e) => updateStatus(b.bookingId, e.target.value as BookingStatus)}
                         className={cn(
-                          "text-[11px] font-medium tracking-tight py-1 pl-3 pr-7 rounded-full cursor-pointer outline-none transition-colors appearance-none",
+                          "text-sm font-medium tracking-tight py-1 pl-3 pr-7 rounded-full cursor-pointer outline-none transition-colors appearance-none",
                           "bg-no-repeat bg-[right_0.5rem_center] bg-[length:10px]",
                           getStatusStyle(b.status)
                         )}
@@ -694,7 +694,7 @@ export function DashboardView({ tab: tabProp, onTabChange, onError }: { tab?: Ad
                                 assignBooking(b, phleb);
                               }}
                               title="Assign phlebotomist"
-                              className="text-[10px] font-bold py-1 px-2 rounded border border-border-subtle bg-white cursor-pointer outline-none w-full max-w-[160px]"
+                              className="text-xs font-bold py-1 px-2 rounded border border-border-subtle bg-white cursor-pointer outline-none w-full max-w-[160px]"
                             >
                               <option value="">Unassigned</option>
                               {dropdownPhlebs.map(p => (
@@ -702,18 +702,18 @@ export function DashboardView({ tab: tabProp, onTabChange, onError }: { tab?: Ad
                               ))}
                             </select>
                             {reason === 'legacy' && (
-                              <div className="text-[9px] text-amber-700 italic">No date set — all phlebs shown</div>
+                              <div className="text-sm text-amber-700 italic">No date set — all phlebs shown</div>
                             )}
                             {reason === 'filtered' && assignable.length === 0 && (
                               <button
                                 onClick={() => toggleAssignOverride(b.bookingId)}
-                                className="text-[9px] font-bold text-red-600 hover:underline text-left"
+                                className="text-sm font-bold text-red-600 hover:underline text-left"
                               >
                                 No phlebs available — show all
                               </button>
                             )}
                             {reason === 'filtered' && assignable.length > 0 && (
-                              <label className="flex items-center gap-1 text-[9px] text-text-muted cursor-pointer">
+                              <label className="flex items-center gap-1 text-sm text-text-muted cursor-pointer">
                                 <input
                                   type="checkbox"
                                   checked={false}
@@ -726,13 +726,13 @@ export function DashboardView({ tab: tabProp, onTabChange, onError }: { tab?: Ad
                             {reason === 'override' && (
                               <button
                                 onClick={() => toggleAssignOverride(b.bookingId)}
-                                className="text-[9px] font-bold text-primary hover:underline text-left"
+                                className="text-sm font-bold text-primary hover:underline text-left"
                               >
                                 Re-filter to available
                               </button>
                             )}
                             {b.assignedToName && b.assignedTo && !phlebotomists.find(p => p.uid === b.assignedTo) && (
-                              <div className="text-[9px] text-text-muted italic">â†’ {b.assignedToName} (inactive)</div>
+                              <div className="text-sm text-text-muted italic">â†’ {b.assignedToName} (inactive)</div>
                             )}
                           </>
                         );
@@ -760,21 +760,21 @@ export function DashboardView({ tab: tabProp, onTabChange, onError }: { tab?: Ad
                       <button
                         title="Edit tests"
                         onClick={() => setEditingBookingId(b.bookingId)}
-                        className="p-1 px-2 text-[9px] bg-slate-100 text-text-dark rounded hover:bg-primary hover:text-white transition-all font-bold uppercase"
+                        className="p-1 px-2 text-sm bg-slate-100 text-text-dark rounded hover:bg-primary hover:text-white transition-all font-bold uppercase"
                       >
                         Edit Tests
                       </button>
                       {b.status === 'Processing' && (
                         <button
                           onClick={() => updateStatus(b.bookingId, 'Completed')}
-                          className="flex items-center gap-2 px-3 py-1.5 bg-primary text-white text-[10px] font-bold uppercase tracking-wider rounded-lg shadow-lg shadow-primary/20 hover:scale-105 transition-all"
+                          className="flex items-center gap-2 px-3 py-1.5 bg-primary text-white text-xs font-bold uppercase tracking-wider rounded-lg shadow-lg shadow-primary/20 hover:scale-105 transition-all"
                         >
                           <FileUp className="w-3 h-3" />
                           Upload Report
                         </button>
                       )}
                       {b.status === 'Completed' && (
-                        <span className="flex items-center gap-1 text-[10px] font-bold text-emerald-600 uppercase tracking-widest">
+                        <span className="flex items-center gap-1 text-xs font-bold text-emerald-600 uppercase tracking-widest">
                           <CheckCircle2 className="w-3 h-3" /> Report Sent
                         </span>
                       )}
@@ -809,7 +809,7 @@ export function DashboardView({ tab: tabProp, onTabChange, onError }: { tab?: Ad
                 <div className="min-w-0 flex-1">
                   <div className="flex items-center gap-2 mb-0.5 flex-wrap">
                     <span className="font-bold text-text-dark text-base truncate">{b.patientName}</span>
-                    <span className="text-[10px] bg-slate-200 px-2 py-0.5 rounded text-text-dark font-black tracking-tighter uppercase">
+                    <span className="text-xs bg-slate-200 px-2 py-0.5 rounded text-text-dark font-black tracking-tighter uppercase">
                       {b.patientGender || 'N/A'} • {b.patientAge || '??'}
                     </span>
                   </div>
@@ -852,7 +852,7 @@ export function DashboardView({ tab: tabProp, onTabChange, onError }: { tab?: Ad
                     ) : (
                       <>
                         <span className="text-text-muted">—</span>
-                        <span className="text-[10px] font-black bg-amber-100 text-amber-700 px-1.5 py-0.5 rounded uppercase tracking-widest">Legacy</span>
+                        <span className="text-xs font-black bg-amber-100 text-amber-700 px-1.5 py-0.5 rounded uppercase tracking-widest">Legacy</span>
                       </>
                     )}
                   </span>
@@ -885,7 +885,7 @@ export function DashboardView({ tab: tabProp, onTabChange, onError }: { tab?: Ad
                     onChange={(e) => setPriority(b, e.target.value as any)}
                     title="Override priority"
                     className={cn(
-                      "text-[11px] font-bold uppercase tracking-widest py-1 px-2 rounded border-none cursor-pointer outline-none",
+                      "text-sm font-bold uppercase tracking-widest py-1 px-2 rounded border-none cursor-pointer outline-none",
                       getPriorityStyle(resolvePriority(b))
                     )}
                   >
@@ -917,18 +917,18 @@ export function DashboardView({ tab: tabProp, onTabChange, onError }: { tab?: Ad
                         ))}
                       </select>
                       {reason === 'legacy' && (
-                        <div className="text-[11px] text-amber-700 italic">No date set — all phlebs shown</div>
+                        <div className="text-sm text-amber-700 italic">No date set — all phlebs shown</div>
                       )}
                       {reason === 'filtered' && assignable.length === 0 && (
                         <button
                           onClick={() => toggleAssignOverride(b.bookingId)}
-                          className="text-[11px] font-bold text-red-600 hover:underline"
+                          className="text-sm font-bold text-red-600 hover:underline"
                         >
                           No phlebs available — show all
                         </button>
                       )}
                       {reason === 'filtered' && assignable.length > 0 && (
-                        <label className="flex items-center gap-1.5 text-[11px] text-text-muted cursor-pointer">
+                        <label className="flex items-center gap-1.5 text-sm text-text-muted cursor-pointer">
                           <input
                             type="checkbox"
                             checked={false}
@@ -941,7 +941,7 @@ export function DashboardView({ tab: tabProp, onTabChange, onError }: { tab?: Ad
                       {reason === 'override' && (
                         <button
                           onClick={() => toggleAssignOverride(b.bookingId)}
-                          className="text-[11px] font-bold text-primary hover:underline"
+                          className="text-sm font-bold text-primary hover:underline"
                         >
                           Re-filter to available
                         </button>
@@ -1057,13 +1057,13 @@ function PatientsView({
               placeholder="Search patients…"
               value={search}
               onChange={(e) => setSearch(e.target.value)}
-              className="bg-transparent border-none text-[13px] outline-none w-full text-[var(--color-text-primary)] placeholder:text-[var(--color-text-tertiary)]"
+              className="bg-transparent border-none text-sm outline-none w-full text-[var(--color-text-primary)] placeholder:text-[var(--color-text-tertiary)]"
             />
           </div>
         </div>
         <div className="max-h-[60vh] overflow-auto scroll-area divide-y divide-[var(--color-border-subtle)]">
           {filtered.length === 0 && (
-            <div className="p-6 text-center text-[var(--color-text-tertiary)] text-[12.5px]">No patients yet</div>
+            <div className="p-6 text-center text-[var(--color-text-tertiary)] text-sm">No patients yet</div>
           )}
           {filtered.map(p => (
             <button
@@ -1080,8 +1080,8 @@ function PatientsView({
                 <User className="w-4 h-4" />
               </div>
               <div className="flex-1 min-w-0">
-                <div className="font-medium text-[13.5px] tracking-tight text-[var(--color-text-primary)] truncate">{p.name || 'Unnamed'}</div>
-                <div className="text-[11.5px] text-[var(--color-text-secondary)] truncate">
+                <div className="font-medium text-sm tracking-tight text-[var(--color-text-primary)] truncate">{p.name || 'Unnamed'}</div>
+                <div className="text-sm text-[var(--color-text-secondary)] truncate">
                   <span className="font-mono">{p.phone || 'no phone'}</span> · {p.age ? `${p.age} yrs` : '?'} · {p.gender || '—'}
                 </div>
               </div>
@@ -1096,22 +1096,22 @@ function PatientsView({
           <div className="h-full flex flex-col items-center justify-center text-center text-[var(--color-text-tertiary)] py-16">
             <Users className="w-10 h-10 opacity-25 mb-3" />
             <p className="text-[14px] font-medium text-[var(--color-text-secondary)]">Select a patient to view bookings</p>
-            <p className="text-[12px] mt-1">Tap any name on the left to drill in.</p>
+            <p className="text-sm mt-1">Tap any name on the left to drill in.</p>
           </div>
         ) : (
           <div className="space-y-5 sm:space-y-6">
             <div className="flex items-start justify-between gap-3">
               <div className="min-w-0 flex-1">
                 <h3 className="text-[20px] font-semibold tracking-tight text-[var(--color-text-primary)] truncate">{selected.name}</h3>
-                <p className="text-[12.5px] text-[var(--color-text-secondary)] mt-0.5">
+                <p className="text-sm text-[var(--color-text-secondary)] mt-0.5">
                   {selected.gender || '—'} · {selected.age || '?'} yrs · <span className="font-mono">{selected.phone || 'no phone'}</span>
                 </p>
                 {selected.address && (
-                  <p className="text-[12.5px] text-[var(--color-text-secondary)] flex items-start gap-1 mt-1.5">
+                  <p className="text-sm text-[var(--color-text-secondary)] flex items-start gap-1 mt-1.5">
                     <MapPin className="w-3.5 h-3.5 mt-0.5 shrink-0" /> <span>{selected.address}</span>
                   </p>
                 )}
-                <p className="text-[11px] text-[var(--color-text-tertiary)] mt-2.5 break-all leading-relaxed">
+                <p className="text-sm text-[var(--color-text-tertiary)] mt-2.5 break-all leading-relaxed">
                   <span className="block sm:inline">Phone account <span className="font-mono">{selected.userId}</span></span>
                   <span className="hidden sm:inline"> · </span>
                   <span className="block sm:inline">Patient ID <span className="font-mono">{selected.id}</span></span>
@@ -1127,11 +1127,11 @@ function PatientsView({
             </div>
 
             <div>
-              <h4 className="text-[11px] font-medium text-[var(--color-text-secondary)] uppercase tracking-[0.06em] mb-3">
+              <h4 className="text-sm font-medium text-[var(--color-text-secondary)] uppercase tracking-[0.06em] mb-3">
                 Bookings ({patientBookings.length})
               </h4>
               {patientBookings.length === 0 ? (
-                <div className="text-[13px] text-[var(--color-text-secondary)] bg-[var(--color-sunken)] border border-[var(--color-border-subtle)] rounded-[var(--radius-md)] p-4 text-center">
+                <div className="text-sm text-[var(--color-text-secondary)] bg-[var(--color-sunken)] border border-[var(--color-border-subtle)] rounded-[var(--radius-md)] p-4 text-center">
                   No bookings yet for this patient.
                 </div>
               ) : (
@@ -1142,10 +1142,10 @@ function PatientsView({
                       className="flex items-center justify-between gap-3 border border-[var(--color-border-subtle)] rounded-[var(--radius-md)] px-3 sm:px-4 py-3 hover:bg-[var(--color-sunken)] transition-colors"
                     >
                       <div className="flex-1 min-w-0">
-                        <div className="text-[13.5px] font-medium text-[var(--color-text-primary)] truncate">
+                        <div className="text-sm font-medium text-[var(--color-text-primary)] truncate">
                           {(b.testNames || []).join(', ') || '—'}
                         </div>
-                        <div className="text-[11.5px] text-[var(--color-text-secondary)] mt-0.5 flex items-center gap-1.5 flex-wrap tabular-nums">
+                        <div className="text-sm text-[var(--color-text-secondary)] mt-0.5 flex items-center gap-1.5 flex-wrap tabular-nums">
                           <span className="font-mono">{b.bookingId.slice(0, 8)}</span>
                           <span>·</span>
                           <span>{b.timeSlot || 'no slot'}</span>
@@ -1154,7 +1154,7 @@ function PatientsView({
                         </div>
                       </div>
                       <span className={cn(
-                        "text-[11px] font-medium tracking-tight px-2 py-0.5 rounded-full whitespace-nowrap",
+                        "text-sm font-medium tracking-tight px-2 py-0.5 rounded-full whitespace-nowrap",
                         getStatusStyle(b.status)
                       )}>
                         {b.status}
@@ -1268,11 +1268,11 @@ function StaffView({ staff, config, onError }: { staff: Staff[]; config: Booking
       <div className="p-4 sm:p-5 border-b border-[var(--color-border-subtle)] flex items-start sm:items-center justify-between gap-3 flex-col sm:flex-row">
         <div>
           <h3 className="text-[15px] font-semibold tracking-tight text-[var(--color-text-primary)]">Staff Members</h3>
-          <p className="text-[13px] text-[var(--color-text-secondary)] mt-0.5">Admins and phlebotomists with dashboard access</p>
+          <p className="text-sm text-[var(--color-text-secondary)] mt-0.5">Admins and phlebotomists with dashboard access</p>
         </div>
         <button
           onClick={() => setShowForm(v => !v)}
-          className="inline-flex items-center justify-center h-10 px-4 bg-[var(--color-accent)] text-white text-[13px] font-medium tracking-tight rounded-[var(--radius-md)] hover:bg-[var(--color-accent-hover)] transition-colors gap-1.5 self-end sm:self-auto"
+          className="inline-flex items-center justify-center h-10 px-4 bg-[var(--color-accent)] text-white text-sm font-medium tracking-tight rounded-[var(--radius-md)] hover:bg-[var(--color-accent-hover)] transition-colors gap-1.5 self-end sm:self-auto"
         >
           <Plus className="w-4 h-4" />
           {showForm ? 'Cancel' : 'Add Staff'}
@@ -1281,16 +1281,16 @@ function StaffView({ staff, config, onError }: { staff: Staff[]; config: Booking
 
       {showForm && (
         <div className="p-5 border-b border-border-subtle bg-blue-50/50 space-y-3">
-          <p className="text-[11px] text-text-muted leading-relaxed">
+          <p className="text-sm text-text-muted leading-relaxed">
             {form.role === 'phlebotomist' ? (
               <>
-                <span className="font-bold uppercase tracking-widest text-[10px] block mb-1">Phlebotomist onboarding</span>
+                <span className="font-bold uppercase tracking-widest text-xs block mb-1">Phlebotomist onboarding</span>
                 A Firebase Auth account will be created with this email and the <strong>phone number (without country code)</strong> as the default password.
                 The phleb can change it from the login screen's <em>Forgot password?</em> link or from their dashboard.
               </>
             ) : (
               <>
-                <span className="font-bold uppercase tracking-widest text-[10px] block mb-1">Admin onboarding</span>
+                <span className="font-bold uppercase tracking-widest text-xs block mb-1">Admin onboarding</span>
                 A Firebase Auth account will be created with this email and the phone number (without country code) as the default password.
                 Admins normally sign in with Google, but the email/password pair also works.
               </>
@@ -1340,7 +1340,7 @@ function StaffView({ staff, config, onError }: { staff: Staff[]; config: Booking
             <button
               onClick={submit}
               disabled={saving || !canSubmit}
-              className="px-4 py-2 bg-primary text-white text-[11px] font-bold uppercase tracking-wider rounded-lg hover:opacity-90 transition-opacity disabled:opacity-50"
+              className="px-4 py-2 bg-primary text-white text-sm font-bold uppercase tracking-wider rounded-lg hover:opacity-90 transition-opacity disabled:opacity-50"
             >
               {saving ? 'Saving…' : 'Save Staff Member'}
             </button>
@@ -1353,12 +1353,12 @@ function StaffView({ staff, config, onError }: { staff: Staff[]; config: Booking
         <table className="w-full min-w-[640px]">
           <thead>
             <tr className="bg-[var(--color-sunken)] border-b border-[var(--color-border-subtle)]">
-              <th className="text-left py-2.5 px-4 sm:px-5 text-[11px] font-medium text-[var(--color-text-secondary)] uppercase tracking-[0.06em] whitespace-nowrap">Name</th>
-              <th className="text-left py-2.5 px-4 sm:px-5 text-[11px] font-medium text-[var(--color-text-secondary)] uppercase tracking-[0.06em] whitespace-nowrap">Role</th>
-              <th className="text-left py-2.5 px-4 sm:px-5 text-[11px] font-medium text-[var(--color-text-secondary)] uppercase tracking-[0.06em] whitespace-nowrap">Email / Phone</th>
-              <th className="hidden lg:table-cell text-left py-2.5 px-4 sm:px-5 text-[11px] font-medium text-[var(--color-text-secondary)] uppercase tracking-[0.06em] whitespace-nowrap">UID</th>
-              <th className="text-left py-2.5 px-4 sm:px-5 text-[11px] font-medium text-[var(--color-text-secondary)] uppercase tracking-[0.06em] whitespace-nowrap">Schedule</th>
-              <th className="text-right py-2.5 px-4 sm:px-5 text-[11px] font-medium text-[var(--color-text-secondary)] uppercase tracking-[0.06em] whitespace-nowrap">Active</th>
+              <th className="text-left py-2.5 px-4 sm:px-5 text-sm font-medium text-[var(--color-text-secondary)] uppercase tracking-[0.06em] whitespace-nowrap">Name</th>
+              <th className="text-left py-2.5 px-4 sm:px-5 text-sm font-medium text-[var(--color-text-secondary)] uppercase tracking-[0.06em] whitespace-nowrap">Role</th>
+              <th className="text-left py-2.5 px-4 sm:px-5 text-sm font-medium text-[var(--color-text-secondary)] uppercase tracking-[0.06em] whitespace-nowrap">Email / Phone</th>
+              <th className="hidden lg:table-cell text-left py-2.5 px-4 sm:px-5 text-sm font-medium text-[var(--color-text-secondary)] uppercase tracking-[0.06em] whitespace-nowrap">UID</th>
+              <th className="text-left py-2.5 px-4 sm:px-5 text-sm font-medium text-[var(--color-text-secondary)] uppercase tracking-[0.06em] whitespace-nowrap">Schedule</th>
+              <th className="text-right py-2.5 px-4 sm:px-5 text-sm font-medium text-[var(--color-text-secondary)] uppercase tracking-[0.06em] whitespace-nowrap">Active</th>
             </tr>
           </thead>
           <tbody className="divide-y divide-border-subtle">
@@ -1370,7 +1370,7 @@ function StaffView({ staff, config, onError }: { staff: Staff[]; config: Booking
                   <td className="py-3 px-4 sm:px-6 text-sm font-bold text-text-dark whitespace-nowrap">{s.name}</td>
                   <td className="py-3 px-4 sm:px-6 whitespace-nowrap">
                     <span className={cn(
-                      "text-[9px] font-black uppercase tracking-widest px-2 py-0.5 rounded",
+                      "text-sm font-black uppercase tracking-widest px-2 py-0.5 rounded",
                       s.role === 'admin' ? 'bg-purple-100 text-purple-700' : 'bg-blue-100 text-blue-700'
                     )}>
                       {s.role}
@@ -1378,26 +1378,26 @@ function StaffView({ staff, config, onError }: { staff: Staff[]; config: Booking
                   </td>
                   <td className="py-3 px-4 sm:px-6 text-xs text-text-muted">
                     <div className="truncate max-w-[200px] sm:max-w-none">{s.email}</div>
-                    {s.phone && <div className="text-[10px] font-mono whitespace-nowrap">{s.phone}</div>}
+                    {s.phone && <div className="text-xs font-mono whitespace-nowrap">{s.phone}</div>}
                   </td>
-                  <td className="hidden lg:table-cell py-3 px-4 sm:px-6 text-[10px] text-text-muted font-mono whitespace-nowrap max-w-[180px] truncate">{s.uid}</td>
+                  <td className="hidden lg:table-cell py-3 px-4 sm:px-6 text-xs text-text-muted font-mono whitespace-nowrap max-w-[180px] truncate">{s.uid}</td>
                   <td className="py-3 px-4 sm:px-6 whitespace-nowrap">
                     {s.role === 'phlebotomist' ? (
                       <button
                         onClick={() => startEditingSchedule(s)}
-                        className="text-[10px] font-bold uppercase tracking-wider px-3 py-1 rounded-md bg-slate-100 text-text-dark hover:bg-slate-200 transition-colors"
+                        className="text-xs font-bold uppercase tracking-wider px-3 py-1 rounded-md bg-slate-100 text-text-dark hover:bg-slate-200 transition-colors"
                       >
                         {editingScheduleUid === s.uid ? 'Editing…' : 'Edit Schedule'}
                       </button>
                     ) : (
-                      <span className="text-[10px] text-text-muted italic">—</span>
+                      <span className="text-xs text-text-muted italic">—</span>
                     )}
                   </td>
                   <td className="py-3 px-4 sm:px-6 text-right whitespace-nowrap">
                     <button
                       onClick={() => toggleActive(s)}
                       className={cn(
-                        "text-[10px] font-bold uppercase tracking-wider px-3 py-1 rounded-full transition-colors",
+                        "text-xs font-bold uppercase tracking-wider px-3 py-1 rounded-full transition-colors",
                         s.active ? "bg-emerald-100 text-emerald-700 hover:bg-emerald-200" : "bg-slate-100 text-slate-500 hover:bg-slate-200"
                       )}
                     >
@@ -1416,14 +1416,14 @@ function StaffView({ staff, config, onError }: { staff: Staff[]; config: Booking
                     <div className="flex items-center justify-end gap-2 mt-3">
                       <button
                         onClick={() => setEditingScheduleUid(null)}
-                        className="px-3 py-1.5 text-[11px] font-bold uppercase tracking-wider rounded-lg border border-border-subtle text-text-muted hover:bg-white transition-colors"
+                        className="px-3 py-1.5 text-sm font-bold uppercase tracking-wider rounded-lg border border-border-subtle text-text-muted hover:bg-white transition-colors"
                       >
                         Cancel
                       </button>
                       <button
                         onClick={() => saveSchedule(s.uid)}
                         disabled={savingSchedule}
-                        className="px-3 py-1.5 text-[11px] font-bold uppercase tracking-wider rounded-lg bg-primary text-white hover:opacity-90 transition-opacity disabled:opacity-50"
+                        className="px-3 py-1.5 text-sm font-bold uppercase tracking-wider rounded-lg bg-primary text-white hover:opacity-90 transition-opacity disabled:opacity-50"
                       >
                         {savingSchedule ? 'Saving…' : 'Save Schedule'}
                       </button>
@@ -1449,7 +1449,7 @@ function StaffView({ staff, config, onError }: { staff: Staff[]; config: Booking
                 <div className="min-w-0 flex-1">
                   <div className="font-bold text-text-dark text-base mb-1">{s.name}</div>
                   <span className={cn(
-                    "text-[10px] font-black uppercase tracking-widest px-2 py-0.5 rounded inline-block",
+                    "text-xs font-black uppercase tracking-widest px-2 py-0.5 rounded inline-block",
                     s.role === 'admin' ? 'bg-purple-100 text-purple-700' : 'bg-blue-100 text-blue-700'
                   )}>
                     {s.role}
@@ -1472,7 +1472,7 @@ function StaffView({ staff, config, onError }: { staff: Staff[]; config: Booking
                 {s.phone && <div className="text-xs font-mono text-text-muted">{s.phone}</div>}
                 <details className="text-xs">
                   <summary className="cursor-pointer text-text-muted font-medium">UID</summary>
-                  <div className="text-[11px] font-mono text-text-muted break-all mt-1">{s.uid}</div>
+                  <div className="text-sm font-mono text-text-muted break-all mt-1">{s.uid}</div>
                 </details>
               </div>
 
@@ -1576,10 +1576,10 @@ function DefaultScheduleEditor({
   return (
     <div className="space-y-2">
       <div className="flex items-center justify-between">
-        <div className="text-[10px] text-text-muted uppercase tracking-widest font-bold">
+        <div className="text-xs text-text-muted uppercase tracking-widest font-bold">
           Default weekly schedule
         </div>
-        <div className="text-[10px] text-text-muted">
+        <div className="text-xs text-text-muted">
           Per-date exceptions live in the Schedule tab.
         </div>
       </div>
@@ -1587,13 +1587,13 @@ function DefaultScheduleEditor({
         <table className="text-xs w-full">
           <thead>
             <tr>
-              <th className="text-left py-2 pr-3 text-[11px] font-medium text-[var(--color-text-secondary)] uppercase tracking-[0.06em]">Day</th>
+              <th className="text-left py-2 pr-3 text-sm font-medium text-[var(--color-text-secondary)] uppercase tracking-[0.06em]">Day</th>
               {headerSlots.map(s => (
-                <th key={s.start} className="text-center py-2 px-2 text-[10px] font-bold text-text-dark whitespace-nowrap">
+                <th key={s.start} className="text-center py-2 px-2 text-xs font-bold text-text-dark whitespace-nowrap">
                   {formatSlotLabel(s)}
                 </th>
               ))}
-              <th className="text-right py-2 pl-3 text-[11px] font-medium text-[var(--color-text-secondary)] uppercase tracking-[0.06em]">Quick</th>
+              <th className="text-right py-2 pl-3 text-sm font-medium text-[var(--color-text-secondary)] uppercase tracking-[0.06em]">Quick</th>
             </tr>
           </thead>
           <tbody className="divide-y divide-border-subtle">
@@ -1623,14 +1623,14 @@ function DefaultScheduleEditor({
                   <td className="py-1.5 pl-3 text-right whitespace-nowrap">
                     <button
                       onClick={() => fillRow(key)}
-                      className="text-[9px] font-bold uppercase tracking-widest text-primary hover:underline"
+                      className="text-sm font-bold uppercase tracking-widest text-primary hover:underline"
                     >
                       All
                     </button>
                     <span className="text-text-muted px-1">·</span>
                     <button
                       onClick={() => clearRow(key)}
-                      className="text-[9px] font-bold uppercase tracking-widest text-text-muted hover:underline"
+                      className="text-sm font-bold uppercase tracking-widest text-text-muted hover:underline"
                     >
                       Off
                     </button>
@@ -1780,18 +1780,18 @@ function SettingsView({ config, onError }: { config: BookingConfig; onError: (er
           <h3 className="text-[15px] font-semibold tracking-tight text-[var(--color-text-primary)] flex items-center gap-2">
             <Settings className="w-4 h-4 text-[var(--color-text-secondary)]" /> Booking Settings
           </h3>
-          <p className="text-[13px] text-[var(--color-text-secondary)] mt-0.5">Slot template and how far ahead customers can book.</p>
+          <p className="text-sm text-[var(--color-text-secondary)] mt-0.5">Slot template and how far ahead customers can book.</p>
         </div>
         <div className="flex items-center gap-3 self-end sm:self-auto">
           {savedFlash && (
-            <span className="text-[12px] font-medium text-[var(--color-status-completed)] tracking-tight flex items-center gap-1">
+            <span className="text-sm font-medium text-[var(--color-status-completed)] tracking-tight flex items-center gap-1">
               <CheckCircle className="w-3.5 h-3.5" /> Saved
             </span>
           )}
           <button
             onClick={save}
             disabled={saving || !!validation || !dirty}
-            className="inline-flex items-center justify-center h-10 px-4 bg-[var(--color-accent)] text-white text-[13px] font-medium tracking-tight rounded-[var(--radius-md)] hover:bg-[var(--color-accent-hover)] transition-colors disabled:opacity-50"
+            className="inline-flex items-center justify-center h-10 px-4 bg-[var(--color-accent)] text-white text-sm font-medium tracking-tight rounded-[var(--radius-md)] hover:bg-[var(--color-accent-hover)] transition-colors disabled:opacity-50"
           >
             {saving ? 'Saving…' : 'Save Settings'}
           </button>
@@ -1801,10 +1801,10 @@ function SettingsView({ config, onError }: { config: BookingConfig; onError: (er
       <div className="p-5 space-y-6">
         <section>
           <div className="flex items-center justify-between mb-3">
-            <h4 className="text-[11px] font-medium text-[var(--color-text-secondary)] uppercase tracking-[0.06em]">Slot Template</h4>
+            <h4 className="text-sm font-medium text-[var(--color-text-secondary)] uppercase tracking-[0.06em]">Slot Template</h4>
             <button
               onClick={addSlot}
-              className="text-[10px] font-bold text-primary hover:underline flex items-center gap-1"
+              className="text-xs font-bold text-primary hover:underline flex items-center gap-1"
             >
               <Plus className="w-3 h-3" /> Add slot
             </button>
@@ -1815,7 +1815,7 @@ function SettingsView({ config, onError }: { config: BookingConfig; onError: (er
             )}
             {slots.map((s, i) => (
               <div key={i} className="flex items-center gap-3 bg-slate-50 border border-border-subtle rounded-lg px-3 py-2">
-                <span className="text-[10px] font-bold text-text-muted w-6">#{i + 1}</span>
+                <span className="text-xs font-bold text-text-muted w-6">#{i + 1}</span>
                 <input
                   type="time"
                   value={s.start}
@@ -1829,7 +1829,7 @@ function SettingsView({ config, onError }: { config: BookingConfig; onError: (er
                   onChange={(e) => updateSlot(i, { end: e.target.value })}
                   className="px-2 py-1 border border-border-subtle rounded text-sm outline-none focus:border-primary bg-white"
                 />
-                <span className="text-[10px] text-text-muted ml-2 flex-1">
+                <span className="text-xs text-text-muted ml-2 flex-1">
                   {/^([01]\d|2[0-3]):[0-5]\d$/.test(s.start) && /^([01]\d|2[0-3]):[0-5]\d$/.test(s.end)
                     ? formatSlotLabel(s)
                     : '—'}
@@ -1848,8 +1848,8 @@ function SettingsView({ config, onError }: { config: BookingConfig; onError: (er
 
         <section>
           <div className="flex items-center justify-between mb-3">
-            <h4 className="text-[11px] font-medium text-[var(--color-text-secondary)] uppercase tracking-[0.06em]">Per-Weekday Slot Overrides</h4>
-            <span className="text-[10px] text-text-muted">Optional. Inherit defaults unless customized.</span>
+            <h4 className="text-sm font-medium text-[var(--color-text-secondary)] uppercase tracking-[0.06em]">Per-Weekday Slot Overrides</h4>
+            <span className="text-xs text-text-muted">Optional. Inherit defaults unless customized.</span>
           </div>
           <div className="space-y-2">
             {WEEKDAY_LABELS.map(({ key, label }) => {
@@ -1882,7 +1882,7 @@ function SettingsView({ config, onError }: { config: BookingConfig; onError: (er
                   <div className="flex items-center justify-between px-3 py-2 bg-slate-50">
                     <div className="flex items-center gap-3">
                       <span className="text-xs font-bold text-text-dark w-24">{label}</span>
-                      <span className="text-[10px] text-text-muted">
+                      <span className="text-xs text-text-muted">
                         {!customized && 'Inherits default slots'}
                         {customized && list!.length === 0 && 'Closed (no slots)'}
                         {customized && list!.length > 0 && `${list!.length} custom slot${list!.length === 1 ? '' : 's'}`}
@@ -1893,13 +1893,13 @@ function SettingsView({ config, onError }: { config: BookingConfig; onError: (er
                         <>
                           <button
                             onClick={addDaySlot}
-                            className="text-[10px] font-bold text-primary hover:underline flex items-center gap-1"
+                            className="text-xs font-bold text-primary hover:underline flex items-center gap-1"
                           >
                             <Plus className="w-3 h-3" /> Slot
                           </button>
                           <button
                             onClick={() => setList(undefined)}
-                            className="text-[10px] font-bold text-text-muted hover:underline"
+                            className="text-xs font-bold text-text-muted hover:underline"
                           >
                             Reset to default
                           </button>
@@ -1907,7 +1907,7 @@ function SettingsView({ config, onError }: { config: BookingConfig; onError: (er
                       ) : (
                         <button
                           onClick={() => setList([])}
-                          className="text-[10px] font-bold text-primary hover:underline"
+                          className="text-xs font-bold text-primary hover:underline"
                         >
                           Customize
                         </button>
@@ -1918,7 +1918,7 @@ function SettingsView({ config, onError }: { config: BookingConfig; onError: (er
                     <div className="p-3 space-y-2">
                       {list!.map((s, i) => (
                         <div key={i} className="flex items-center gap-3 bg-slate-50 border border-border-subtle rounded-lg px-3 py-1.5">
-                          <span className="text-[10px] font-bold text-text-muted w-6">#{i + 1}</span>
+                          <span className="text-xs font-bold text-text-muted w-6">#{i + 1}</span>
                           <input
                             type="time"
                             value={s.start}
@@ -1932,7 +1932,7 @@ function SettingsView({ config, onError }: { config: BookingConfig; onError: (er
                             onChange={(e) => updateDaySlot(i, { end: e.target.value })}
                             className="px-2 py-1 border border-border-subtle rounded text-sm outline-none focus:border-primary bg-white"
                           />
-                          <span className="text-[10px] text-text-muted ml-2 flex-1">
+                          <span className="text-xs text-text-muted ml-2 flex-1">
                             {/^([01]\d|2[0-3]):[0-5]\d$/.test(s.start) && /^([01]\d|2[0-3]):[0-5]\d$/.test(s.end)
                               ? formatSlotLabel(s)
                               : '—'}
@@ -1955,7 +1955,7 @@ function SettingsView({ config, onError }: { config: BookingConfig; onError: (er
         </section>
 
         <section>
-          <h4 className="text-[11px] font-medium text-[var(--color-text-secondary)] uppercase tracking-[0.06em] mb-3">Booking Window</h4>
+          <h4 className="text-sm font-medium text-[var(--color-text-secondary)] uppercase tracking-[0.06em] mb-3">Booking Window</h4>
           <div className="flex items-center gap-3">
             <span className="text-xs font-bold text-text-dark">Customers can book up to</span>
             <input
@@ -1971,7 +1971,7 @@ function SettingsView({ config, onError }: { config: BookingConfig; onError: (er
         </section>
 
         <section>
-          <h4 className="text-[11px] font-medium text-[var(--color-text-secondary)] uppercase tracking-[0.06em] mb-3">Service Area PINs</h4>
+          <h4 className="text-sm font-medium text-[var(--color-text-secondary)] uppercase tracking-[0.06em] mb-3">Service Area PINs</h4>
           <div className="flex flex-wrap gap-2 mb-2">
             {servicePins.map((pin) => (
               <span key={pin} className="inline-flex items-center gap-1 bg-primary/10 text-primary text-xs font-bold px-2.5 py-1 rounded-full">
@@ -2003,7 +2003,7 @@ function SettingsView({ config, onError }: { config: BookingConfig; onError: (er
             <button
               onClick={addPin}
               disabled={!/^\d{6}$/.test(pinDraft.trim()) || servicePins.includes(pinDraft.trim())}
-              className="text-[10px] font-bold text-primary hover:underline flex items-center gap-1 disabled:opacity-40 disabled:no-underline"
+              className="text-xs font-bold text-primary hover:underline flex items-center gap-1 disabled:opacity-40 disabled:no-underline"
             >
               <Plus className="w-3 h-3" /> Add PIN
             </button>
@@ -2011,8 +2011,8 @@ function SettingsView({ config, onError }: { config: BookingConfig; onError: (er
         </section>
 
         <section>
-          <h4 className="text-[11px] font-medium text-[var(--color-text-secondary)] uppercase tracking-[0.06em] mb-3">GPS Service Radius</h4>
-          <p className="text-[11px] text-text-muted mb-2">
+          <h4 className="text-sm font-medium text-[var(--color-text-secondary)] uppercase tracking-[0.06em] mb-3">GPS Service Radius</h4>
+          <p className="text-sm text-text-muted mb-2">
             When a customer shares their live WhatsApp location, the bot accepts them if they're within this many kilometers of the service center.
           </p>
           <div className="flex items-center gap-3">
@@ -2032,14 +2032,14 @@ function SettingsView({ config, onError }: { config: BookingConfig; onError: (er
             </span>
             <button
               onClick={() => setEditCoords((v) => !v)}
-              className="text-[10px] font-bold text-primary hover:underline"
+              className="text-xs font-bold text-primary hover:underline"
             >
               {editCoords ? 'Hide coords' : 'Edit coords'}
             </button>
           </div>
           {editCoords && (
             <div className="mt-3 flex items-center gap-3">
-              <label className="text-[10px] font-bold text-text-muted uppercase tracking-widest">Lat</label>
+              <label className="text-xs font-bold text-text-muted uppercase tracking-widest">Lat</label>
               <input
                 type="number"
                 step="any"
@@ -2049,7 +2049,7 @@ function SettingsView({ config, onError }: { config: BookingConfig; onError: (er
                 onChange={(e) => { setServiceCenterLat(Number(e.target.value)); setDirty(true); }}
                 className="px-2 py-1 w-32 border border-border-subtle rounded text-sm outline-none focus:border-primary bg-white"
               />
-              <label className="text-[10px] font-bold text-text-muted uppercase tracking-widest">Lng</label>
+              <label className="text-xs font-bold text-text-muted uppercase tracking-widest">Lng</label>
               <input
                 type="number"
                 step="any"
@@ -2064,7 +2064,7 @@ function SettingsView({ config, onError }: { config: BookingConfig; onError: (er
         </section>
 
         {validation && (
-          <div className="text-[11px] font-bold text-red-600 bg-red-50 border border-red-100 rounded-lg px-3 py-2 flex items-center gap-2">
+          <div className="text-sm font-bold text-red-600 bg-red-50 border border-red-100 rounded-lg px-3 py-2 flex items-center gap-2">
             <AlertTriangle className="w-3.5 h-3.5" />
             {validation}
           </div>
@@ -2221,18 +2221,18 @@ function ScheduleView({
         <h3 className="text-[15px] font-semibold tracking-tight text-[var(--color-text-primary)] flex items-center gap-2">
           <Calendar className="w-4 h-4 text-[var(--color-text-secondary)]" /> Phlebotomist Schedule
         </h3>
-        <p className="text-[13px] text-[var(--color-text-secondary)] mt-0.5">Per-date availability. Empty doc = staff default schedule applies.</p>
+        <p className="text-sm text-[var(--color-text-secondary)] mt-0.5">Per-date availability. Empty doc = staff default schedule applies.</p>
       </div>
 
       <div className="p-4 sm:p-5 border-b border-[var(--color-border-subtle)]">
-        <div className="text-[11px] font-medium text-[var(--color-text-secondary)] uppercase tracking-[0.06em] mb-2">Date</div>
+        <div className="text-sm font-medium text-[var(--color-text-secondary)] uppercase tracking-[0.06em] mb-2">Date</div>
         <div className="flex items-center gap-1.5 overflow-x-auto pb-1 scrollbar-none">
           {dateOptions.map(d => (
             <button
               key={d}
               onClick={() => setSelectedDate(d)}
               className={cn(
-                "h-8 px-3 rounded-[var(--radius-md)] text-[12.5px] font-medium tracking-tight whitespace-nowrap border transition-colors",
+                "h-8 px-3 rounded-[var(--radius-md)] text-sm font-medium tracking-tight whitespace-nowrap border transition-colors",
                 selectedDate === d
                   ? "bg-[var(--color-accent)] text-white border-[var(--color-accent)]"
                   : "bg-[var(--color-surface)] text-[var(--color-text-primary)] border-[var(--color-border-subtle)] hover:bg-[var(--color-sunken)]"
@@ -2249,25 +2249,25 @@ function ScheduleView({
         <table className="w-full min-w-[720px]">
           <thead>
             <tr className="bg-[var(--color-sunken)] border-b border-[var(--color-border-subtle)]">
-              <th className="text-left py-2.5 px-4 text-[11px] font-medium text-[var(--color-text-secondary)] uppercase tracking-[0.06em] whitespace-nowrap">Phlebotomist</th>
+              <th className="text-left py-2.5 px-4 text-sm font-medium text-[var(--color-text-secondary)] uppercase tracking-[0.06em] whitespace-nowrap">Phlebotomist</th>
               {dateSlots.map(s => (
-                <th key={s.start} className="text-center py-2.5 px-2 text-[11.5px] font-medium text-[var(--color-text-primary)] tabular-nums whitespace-nowrap">
+                <th key={s.start} className="text-center py-2.5 px-2 text-sm font-medium text-[var(--color-text-primary)] tabular-nums whitespace-nowrap">
                   {formatSlotLabel(s)}
                 </th>
               ))}
               {offTemplateSlotStarts.map(start => (
                 <th
                   key={`off-${start}`}
-                  className="text-center py-2.5 px-2 text-[11.5px] font-medium text-[var(--color-status-created)] tabular-nums whitespace-nowrap"
+                  className="text-center py-2.5 px-2 text-sm font-medium text-[var(--color-status-created)] tabular-nums whitespace-nowrap"
                   title="Off-template slot — booking exists but not in current template"
                 >
                   {start}
-                  <span className="ml-1 text-[9px] font-semibold uppercase tracking-[0.06em] bg-[var(--color-status-created-bg)] ring-1 ring-inset ring-[var(--color-status-created-ring)] px-1.5 py-0.5 rounded">
+                  <span className="ml-1 text-sm font-semibold uppercase tracking-[0.06em] bg-[var(--color-status-created-bg)] ring-1 ring-inset ring-[var(--color-status-created-ring)] px-1.5 py-0.5 rounded">
                     Off
                   </span>
                 </th>
               ))}
-              <th className="text-right py-2.5 px-4 text-[11px] font-medium text-[var(--color-text-secondary)] uppercase tracking-[0.06em]">Actions</th>
+              <th className="text-right py-2.5 px-4 text-sm font-medium text-[var(--color-text-secondary)] uppercase tracking-[0.06em]">Actions</th>
             </tr>
           </thead>
           <tbody className="divide-y divide-border-subtle">
@@ -2285,7 +2285,7 @@ function ScheduleView({
                 <tr key={p.uid} className="hover:bg-slate-50/40">
                   <td className="py-3 px-4">
                     <div className="text-sm font-bold text-text-dark">{p.name}</div>
-                    <div className="text-[10px] text-text-muted">
+                    <div className="text-xs text-text-muted">
                       {override ? (
                         <span className="text-amber-700 font-bold">Override active</span>
                       ) : (
@@ -2334,13 +2334,13 @@ function ScheduleView({
                   })}
                   <td className="py-3 px-4 text-right whitespace-nowrap">
                     {dayOff ? (
-                      <span className="text-[10px] font-black bg-red-100 text-red-700 px-2 py-0.5 rounded uppercase tracking-widest">
+                      <span className="text-xs font-black bg-red-100 text-red-700 px-2 py-0.5 rounded uppercase tracking-widest">
                         Day off
                       </span>
                     ) : (
                       <button
                         onClick={() => markDayOff(p)}
-                        className="text-[10px] font-bold uppercase tracking-wider text-red-600 hover:underline mr-3"
+                        className="text-xs font-bold uppercase tracking-wider text-red-600 hover:underline mr-3"
                       >
                         Day off
                       </button>
@@ -2348,7 +2348,7 @@ function ScheduleView({
                     {override && (
                       <button
                         onClick={() => resetToDefault(p)}
-                        className="text-[10px] font-bold uppercase tracking-wider text-primary hover:underline"
+                        className="text-xs font-bold uppercase tracking-wider text-primary hover:underline"
                       >
                         Reset to default
                       </button>
@@ -2386,7 +2386,7 @@ function ScheduleView({
                   </div>
                 </div>
                 {dayOff && (
-                  <span className="text-[11px] font-black bg-red-100 text-red-700 px-2 py-1 rounded uppercase tracking-widest shrink-0">
+                  <span className="text-sm font-black bg-red-100 text-red-700 px-2 py-1 rounded uppercase tracking-widest shrink-0">
                     Day off
                   </span>
                 )}
@@ -2394,7 +2394,7 @@ function ScheduleView({
 
               {/* Slot grid */}
               <div className="pt-2 border-t border-[var(--color-border-subtle)]">
-                <div className="text-[11px] font-medium text-text-muted uppercase tracking-widest mb-2">Slots</div>
+                <div className="text-sm font-medium text-text-muted uppercase tracking-widest mb-2">Slots</div>
                 <div className="grid grid-cols-3 gap-2">
                   {dateSlots.map(s => {
                     const isOn = !dayOff && effective.includes(s.start);
@@ -2406,7 +2406,7 @@ function ScheduleView({
                         disabled={dayOff}
                         title={conflict ? `Booking ${conflict.bookingId} assigned here` : isOn ? 'Working — tap to remove' : 'Off — tap to add'}
                         className={cn(
-                          "flex flex-col items-center justify-center gap-1 py-2 px-1 rounded-md border-2 transition-colors text-[11px] font-medium tabular-nums",
+                          "flex flex-col items-center justify-center gap-1 py-2 px-1 rounded-md border-2 transition-colors text-sm font-medium tabular-nums",
                           dayOff
                             ? "border-slate-200 bg-slate-100 text-slate-300 cursor-not-allowed"
                             : isOn
@@ -2425,7 +2425,7 @@ function ScheduleView({
 
                 {offTemplateSlotStarts.length > 0 && (
                   <>
-                    <div className="text-[11px] font-medium text-[var(--color-status-created)] uppercase tracking-widest mt-3 mb-2">Off-template</div>
+                    <div className="text-sm font-medium text-[var(--color-status-created)] uppercase tracking-widest mt-3 mb-2">Off-template</div>
                     <div className="grid grid-cols-3 gap-2">
                       {offTemplateSlotStarts.map(start => {
                         const conflict = bookingAt(p.uid, start);
@@ -2433,7 +2433,7 @@ function ScheduleView({
                           <div
                             key={`off-${p.uid}-${start}`}
                             className={cn(
-                              "flex flex-col items-center justify-center gap-1 py-2 px-1 rounded-md border-2 text-[11px] font-medium tabular-nums",
+                              "flex flex-col items-center justify-center gap-1 py-2 px-1 rounded-md border-2 text-sm font-medium tabular-nums",
                               conflict
                                 ? "border-amber-400 bg-amber-50 text-amber-700"
                                 : "border-border-subtle bg-white text-text-muted"
@@ -2622,13 +2622,13 @@ export function PhlebotomistDashboard({ user, onError }: { user: FirebaseUser; o
           <h1 className="text-[22px] sm:text-[26px] font-semibold tracking-tight leading-[1.2] text-[var(--color-text-primary)]">
             My Queue
           </h1>
-          <p className="mt-0.5 text-[13px] text-[var(--color-text-secondary)]">
+          <p className="mt-0.5 text-sm text-[var(--color-text-secondary)]">
             {active.length} assigned · {unassigned.length} unclaimed
           </p>
         </div>
         <button
           onClick={() => setNewBookingOpen(true)}
-          className="inline-flex items-center gap-1.5 h-10 px-3.5 sm:px-4 rounded-[var(--radius-md)] bg-[var(--color-accent)] text-white text-[13px] font-medium tracking-tight hover:bg-[var(--color-accent-hover)] transition-colors shrink-0"
+          className="inline-flex items-center gap-1.5 h-10 px-3.5 sm:px-4 rounded-[var(--radius-md)] bg-[var(--color-accent)] text-white text-sm font-medium tracking-tight hover:bg-[var(--color-accent-hover)] transition-colors shrink-0"
         >
           <Plus className="w-4 h-4" />
           <span className="hidden sm:inline">New Booking</span>
@@ -2646,7 +2646,7 @@ export function PhlebotomistDashboard({ user, onError }: { user: FirebaseUser; o
       <MyScheduleWidget staff={ownStaff} config={config} />
 
       <section>
-        <h3 className="text-[11px] font-medium text-[var(--color-text-secondary)] uppercase tracking-[0.06em] mb-3">
+        <h3 className="text-sm font-medium text-[var(--color-text-secondary)] uppercase tracking-[0.06em] mb-3">
           Today's Assignments ({active.length})
         </h3>
         {active.length === 0 ? (
@@ -2671,7 +2671,7 @@ export function PhlebotomistDashboard({ user, onError }: { user: FirebaseUser; o
       </section>
 
       <section>
-        <h3 className="text-[11px] font-medium text-[var(--color-text-secondary)] uppercase tracking-[0.06em] mb-3">
+        <h3 className="text-sm font-medium text-[var(--color-text-secondary)] uppercase tracking-[0.06em] mb-3">
           Unassigned Queue ({unassigned.length})
         </h3>
         {unassigned.length === 0 ? (
@@ -2695,7 +2695,7 @@ export function PhlebotomistDashboard({ user, onError }: { user: FirebaseUser; o
       <section>
         <button
           onClick={() => setShowCompleted(v => !v)}
-          className="text-[11px] font-medium text-[var(--color-text-secondary)] uppercase tracking-[0.06em] mb-3 flex items-center gap-2 hover:text-text-dark"
+          className="text-sm font-medium text-[var(--color-text-secondary)] uppercase tracking-[0.06em] mb-3 flex items-center gap-2 hover:text-text-dark"
         >
           {showCompleted ? <ChevronDown className="w-3 h-3" /> : <ChevronRight className="w-3 h-3" />}
           Completed Today ({completedToday.length})
@@ -2738,10 +2738,10 @@ function MyScheduleWidget({ staff, config }: { staff: Staff | null; config: Book
   return (
     <section className="bg-[var(--color-surface)] border border-[var(--color-border-subtle)] rounded-[var(--radius-lg)] p-3 sm:p-4">
       <div className="flex items-center justify-between mb-2">
-        <h3 className="text-[11px] font-medium text-[var(--color-text-secondary)] uppercase tracking-[0.06em]">
+        <h3 className="text-sm font-medium text-[var(--color-text-secondary)] uppercase tracking-[0.06em]">
           My Default Schedule
         </h3>
-        <span className="text-[10px] text-[var(--color-text-secondary)]">Admin overrides apply per date</span>
+        <span className="text-xs text-[var(--color-text-secondary)]">Admin overrides apply per date</span>
       </div>
       <div className="grid grid-cols-7 gap-1.5 sm:gap-2">
         {days.map(({ key, label }) => {
@@ -2759,9 +2759,9 @@ function MyScheduleWidget({ staff, config }: { staff: Staff | null; config: Book
                   : "bg-[var(--color-surface)] border-[var(--color-border-subtle)]"
               )}
             >
-              <div className="text-[10px] font-semibold uppercase tracking-wider text-[var(--color-text-secondary)]">{label}</div>
+              <div className="text-xs font-semibold uppercase tracking-wider text-[var(--color-text-secondary)]">{label}</div>
               {off ? (
-                <div className="text-[10px] mt-1 italic">Off</div>
+                <div className="text-xs mt-1 italic">Off</div>
               ) : (
                 <div className="mt-1 space-y-0.5">
                   {visible.map(s => (
@@ -2811,7 +2811,7 @@ function PhlebBookingCard({
           <div className="min-w-0 flex-1">
             <div className="flex items-center gap-1.5 sm:gap-2 flex-wrap">
               <span className="font-semibold text-[15px] tracking-tight text-[var(--color-text-primary)]">{booking.patientName}</span>
-              <span className="text-[10px] bg-[var(--color-sunken)] ring-1 ring-inset ring-[var(--color-border-subtle)] px-1.5 py-0.5 rounded font-medium uppercase tracking-[0.04em] text-[var(--color-text-secondary)] whitespace-nowrap">
+              <span className="text-xs bg-[var(--color-sunken)] ring-1 ring-inset ring-[var(--color-border-subtle)] px-1.5 py-0.5 rounded font-medium uppercase tracking-[0.04em] text-[var(--color-text-secondary)] whitespace-nowrap">
                 {booking.patientGender || '—'} · {booking.patientAge || '?'}
               </span>
               {priority && (
@@ -2829,7 +2829,7 @@ function PhlebBookingCard({
                 {booking.status}
               </span>
             </div>
-            <div className="text-[12px] text-[var(--color-text-secondary)] mt-1.5 flex items-center gap-x-3 gap-y-1 flex-wrap">
+            <div className="text-sm text-[var(--color-text-secondary)] mt-1.5 flex items-center gap-x-3 gap-y-1 flex-wrap">
               <a href={`tel:${booking.patientPhone}`} className="flex items-center gap-1 font-mono hover:text-[var(--color-accent-hover)] transition-colors">
                 <Phone className="w-3 h-3" /> {booking.patientPhone || 'no phone'}
               </a>
@@ -2840,7 +2840,7 @@ function PhlebBookingCard({
                 ) : (
                   <>
                     <span>—</span>
-                    <span className="text-[10px] font-medium bg-[var(--color-status-created-bg)] text-[var(--color-status-created)] ring-1 ring-inset ring-[var(--color-status-created-ring)] px-1.5 py-0.5 rounded-full uppercase tracking-[0.04em]">Legacy</span>
+                    <span className="text-xs font-medium bg-[var(--color-status-created-bg)] text-[var(--color-status-created)] ring-1 ring-inset ring-[var(--color-status-created-ring)] px-1.5 py-0.5 rounded-full uppercase tracking-[0.04em]">Legacy</span>
                   </>
                 )}
               </span>
@@ -2857,7 +2857,7 @@ function PhlebBookingCard({
         </div>
         <div className="text-right">
           <div className="text-lg font-black text-text-dark">₹{booking.price || 0}</div>
-          <div className="text-[9px] text-text-muted uppercase tracking-widest font-bold">Revenue</div>
+          <div className="text-sm text-text-muted uppercase tracking-widest font-bold">Revenue</div>
         </div>
       </div>
 
@@ -2875,7 +2875,7 @@ function PhlebBookingCard({
                 href={mapsHref}
                 target="_blank"
                 rel="noreferrer"
-                className="text-[10px] font-bold text-primary hover:underline whitespace-nowrap"
+                className="text-xs font-bold text-primary hover:underline whitespace-nowrap"
               >
                 Open in Maps â†—
               </a>
@@ -2894,7 +2894,7 @@ function PhlebBookingCard({
           {mode === 'queue' && (
             <button
               onClick={onSelfAssign}
-              className="inline-flex items-center justify-center h-9 px-3.5 bg-[var(--color-accent)] text-white text-[13px] font-medium tracking-tight rounded-[var(--radius-md)] hover:bg-[var(--color-accent-hover)] transition-colors"
+              className="inline-flex items-center justify-center h-9 px-3.5 bg-[var(--color-accent)] text-white text-sm font-medium tracking-tight rounded-[var(--radius-md)] hover:bg-[var(--color-accent-hover)] transition-colors"
             >
               Self-Assign
             </button>
@@ -2903,14 +2903,14 @@ function PhlebBookingCard({
             <>
               <button
                 onClick={onEditTests}
-                className="inline-flex items-center justify-center h-9 px-3 bg-[var(--color-sunken)] text-[var(--color-text-primary)] border border-[var(--color-border-subtle)] text-[12.5px] font-medium tracking-tight rounded-[var(--radius-md)] hover:bg-[var(--color-border-subtle)] transition-colors"
+                className="inline-flex items-center justify-center h-9 px-3 bg-[var(--color-sunken)] text-[var(--color-text-primary)] border border-[var(--color-border-subtle)] text-sm font-medium tracking-tight rounded-[var(--radius-md)] hover:bg-[var(--color-border-subtle)] transition-colors"
               >
                 Edit Tests
               </button>
               {booking.status === 'Assigned' && (
                 <button
                   onClick={onMarkCollected}
-                  className="inline-flex items-center justify-center h-9 px-3 bg-[var(--color-status-collected)] text-white text-[12.5px] font-medium tracking-tight rounded-[var(--radius-md)] hover:opacity-90 transition-opacity"
+                  className="inline-flex items-center justify-center h-9 px-3 bg-[var(--color-status-collected)] text-white text-sm font-medium tracking-tight rounded-[var(--radius-md)] hover:opacity-90 transition-opacity"
                 >
                   Mark Collected
                 </button>
@@ -2918,7 +2918,7 @@ function PhlebBookingCard({
               {booking.status === 'Collected' && (
                 <button
                   onClick={onMarkProcessing}
-                  className="inline-flex items-center justify-center h-9 px-3 bg-[var(--color-status-processing)] text-white text-[12.5px] font-medium tracking-tight rounded-[var(--radius-md)] hover:opacity-90 transition-opacity"
+                  className="inline-flex items-center justify-center h-9 px-3 bg-[var(--color-status-processing)] text-white text-sm font-medium tracking-tight rounded-[var(--radius-md)] hover:opacity-90 transition-opacity"
                 >
                   Mark Processing
                 </button>
@@ -2926,7 +2926,7 @@ function PhlebBookingCard({
               {booking.status === 'Processing' && (
                 <button
                   onClick={onMarkCompleted}
-                  className="inline-flex items-center justify-center h-9 px-3 bg-[var(--color-status-completed)] text-white text-[12.5px] font-medium tracking-tight rounded-[var(--radius-md)] hover:opacity-90 transition-opacity"
+                  className="inline-flex items-center justify-center h-9 px-3 bg-[var(--color-status-completed)] text-white text-sm font-medium tracking-tight rounded-[var(--radius-md)] hover:opacity-90 transition-opacity"
                 >
                   Mark Completed
                 </button>
@@ -2969,7 +2969,7 @@ function TestPickerModal({
         <header className="px-4 sm:px-5 py-3.5 sm:py-4 border-b border-[var(--color-border-subtle)] flex items-center justify-between gap-3">
           <div className="min-w-0">
             <h3 className="text-[16px] font-semibold tracking-tight text-[var(--color-text-primary)]">Edit Tests</h3>
-            <p className="text-[12px] text-[var(--color-text-secondary)] truncate"><span className="font-mono">{booking.bookingId.slice(0, 8)}</span> · {booking.patientName}</p>
+            <p className="text-sm text-[var(--color-text-secondary)] truncate"><span className="font-mono">{booking.bookingId.slice(0, 8)}</span> · {booking.patientName}</p>
           </div>
           <button onClick={onClose} className="p-1.5 rounded-[var(--radius-sm)] text-[var(--color-text-tertiary)] hover:text-[var(--color-text-primary)] hover:bg-[var(--color-sunken)] transition-colors" aria-label="Close">
             <X className="w-4 h-4" />
@@ -2990,11 +2990,11 @@ function TestPickerModal({
                 )}
               >
                 <div className="min-w-0">
-                  <div className="text-[13.5px] font-medium tracking-tight text-[var(--color-text-primary)] truncate">{name}</div>
-                  <div className="text-[11.5px] text-[var(--color-text-secondary)] truncate">{getPackageByName(name)?.tests ?? ''}</div>
+                  <div className="text-sm font-medium tracking-tight text-[var(--color-text-primary)] truncate">{name}</div>
+                  <div className="text-sm text-[var(--color-text-secondary)] truncate">{getPackageByName(name)?.tests ?? ''}</div>
                 </div>
                 <div className="flex items-center gap-2 shrink-0">
-                  <span className="text-[13px] font-semibold tabular-nums text-[var(--color-text-primary)]">₹{getPackagePrice(name)}</span>
+                  <span className="text-sm font-semibold tabular-nums text-[var(--color-text-primary)]">₹{getPackagePrice(name)}</span>
                   {isOn ? <CheckCircle2 className="w-5 h-5 text-[var(--color-accent)]" /> : <Plus className="w-5 h-5 text-[var(--color-text-tertiary)]" />}
                 </div>
               </button>
@@ -3002,20 +3002,20 @@ function TestPickerModal({
           })}
         </div>
         <footer className="px-4 sm:px-5 py-3 border-t border-[var(--color-border-subtle)] flex items-center justify-between gap-3">
-          <div className="text-[13px]">
+          <div className="text-sm">
             <span className="text-[var(--color-text-secondary)]">Total </span>
             <span className="font-semibold tabular-nums text-[var(--color-text-primary)]">₹{total}</span>
           </div>
           <div className="flex gap-2">
             <button
               onClick={onClose}
-              className="inline-flex items-center justify-center h-9 px-3 text-[13px] font-medium tracking-tight text-[var(--color-text-secondary)] hover:text-[var(--color-text-primary)] hover:bg-[var(--color-sunken)] rounded-[var(--radius-md)] transition-colors"
+              className="inline-flex items-center justify-center h-9 px-3 text-sm font-medium tracking-tight text-[var(--color-text-secondary)] hover:text-[var(--color-text-primary)] hover:bg-[var(--color-sunken)] rounded-[var(--radius-md)] transition-colors"
             >
               Cancel
             </button>
             <button
               onClick={() => onSave(selected)}
-              className="inline-flex items-center justify-center h-9 px-4 bg-[var(--color-accent)] text-white text-[13px] font-medium tracking-tight rounded-[var(--radius-md)] hover:bg-[var(--color-accent-hover)] transition-colors"
+              className="inline-flex items-center justify-center h-9 px-4 bg-[var(--color-accent)] text-white text-sm font-medium tracking-tight rounded-[var(--radius-md)] hover:bg-[var(--color-accent-hover)] transition-colors"
             >
               Save
             </button>
@@ -3906,7 +3906,7 @@ export function WhatsAppSimulator({ userId }: { userId: string }) {
             </div>
             <div className="flex flex-col">
               <span className="font-semibold text-sm leading-tight">CareMol Melattur</span>
-              <span className="text-[10px] opacity-70">online</span>
+              <span className="text-xs opacity-70">online</span>
             </div>
           </div>
           <button 
@@ -3935,7 +3935,7 @@ export function WhatsAppSimulator({ userId }: { userId: string }) {
                     <button
                       key={`${btn}-${idx}`}
                       onClick={() => handleAction(btn)}
-                      className="bg-white border border-whatsapp text-whatsapp font-bold text-[10px] py-2 px-3 rounded shadow-sm hover:bg-green-50 transition-colors uppercase tracking-wider"
+                      className="bg-white border border-whatsapp text-whatsapp font-bold text-xs py-2 px-3 rounded shadow-sm hover:bg-green-50 transition-colors uppercase tracking-wider"
                     >
                       {btn}
                     </button>
@@ -3956,7 +3956,7 @@ export function WhatsAppSimulator({ userId }: { userId: string }) {
               value={inputText}
               onChange={(e) => setInputText(e.target.value)}
               onKeyDown={(e) => e.key === 'Enter' && inputText && (handleAction(inputText), setInputText(''))}
-              className="flex-1 bg-transparent border-none focus:ring-0 outline-none text-[11px]"
+              className="flex-1 bg-transparent border-none focus:ring-0 outline-none text-sm"
             />
           </div>
         </footer>

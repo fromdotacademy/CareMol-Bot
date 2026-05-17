@@ -7,7 +7,7 @@ const root = path.resolve(__dirname, '..');
 
 await build({
   entryPoints: [path.join(root, 'api-src/index.ts')],
-  outfile: path.join(root, 'api/index.js'),
+  outfile: path.join(root, 'api-bundle.js'),
   bundle: true,
   platform: 'node',
   target: 'node20',

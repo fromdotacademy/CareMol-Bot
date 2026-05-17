@@ -2,6 +2,11 @@ import "dotenv/config";
 import express from "express";
 import path from "path";
 import { fileURLToPath } from "url";
+import { admin, adminDb } from "./src/services/firebaseAdmin.js";
+import { handleWhatsAppMessage } from "./src/services/botLogic.js";
+import { sendWhatsAppMessage } from "./src/services/whatsappService.js";
+import { HARDCODED_ADMIN_EMAILS } from "./src/lib/adminEmails.js";
+import { buildBookingConfirmation } from "./src/services/confirmationMessage.js";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -18,11 +23,6 @@ app.get("/api/health", (req, res) => {
 async function init() {
   try {
     console.log("[BOOT] Loading heavy services...");
-    const { admin, adminDb } = await import("./src/services/firebaseAdmin.js");
-    const { handleWhatsAppMessage } = await import("./src/services/botLogic.js");
-    const { sendWhatsAppMessage } = await import("./src/services/whatsappService.js");
-    const { HARDCODED_ADMIN_EMAILS } = await import("./src/lib/adminEmails.js");
-    const { buildBookingConfirmation } = await import("./src/services/confirmationMessage.js");
     const isStaff = async (decoded: { uid: string; email?: string }): Promise<{ ok: boolean; role?: "admin" | "phlebotomist" }> => {
       if (decoded.email && HARDCODED_ADMIN_EMAILS.has(decoded.email)) {
         return { ok: true, role: "admin" };

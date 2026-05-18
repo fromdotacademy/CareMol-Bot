@@ -12,7 +12,17 @@ import {
 import { buildBookingConfirmation } from './confirmationMessage';
 import { isCoordInServiceArea, isPinInServiceArea, toServiceAreaConfig } from './serviceAreaService';
 import { generateId } from '../lib/utils';
-import { ChatStep, Language, Booking, BookingConfig, PatientProfile } from '../types';
+import {
+  ChatStep,
+  Language,
+  Booking,
+  BookingConfig,
+  PatientProfile,
+  Staff,
+  PhlebAvailability,
+  isCancellable,
+  isWithinCustomerActionWindow,
+} from '../types';
 import { parsePatientDetails } from './aiParserService';
 import {
   defaultBookingConfig,
@@ -23,6 +33,8 @@ import {
   slotsForDate,
   filterBookableSlots,
   bookableDates,
+  canPhlebKeepBooking,
+  phlebAvailabilityDocId,
 } from './slotService';
 
 export interface BotSession {
@@ -40,6 +52,7 @@ export interface BotSession {
     timeSlot: string;
   };
   cancelDraftReason?: string;
+  myBookingsCache?: Array<{ bookingId: string; label: string }>;
 }
 
 export interface BotResponse {
@@ -162,6 +175,127 @@ export interface IncomingLocation {
   longitude: number;
 }
 
+// ============================================================================
+// My Bookings helpers
+// ============================================================================
+
+type BookingListEntry = { bookingId: string; label: string };
+
+// Pulls the customer's bookings, drops Cancelled, hides Completed older than 30
+// days, and sorts active-first (oldest bookingDate first), then Completed
+// (latest first). Uses createdAt as a fallback for legacy completed rows that
+// pre-date the bookingDate field.
+async function fetchCustomerBookings(phone: string): Promise<Booking[]> {
+  const snap = await adminDb.collection('bookings').where('userId', '==', phone).get();
+  const all = snap.docs.map(d => ({ ...d.data(), bookingId: d.id } as Booking));
+  const thirtyDaysAgo = (() => {
+    const d = new Date();
+    d.setDate(d.getDate() - 30);
+    return d.toISOString().slice(0, 10);
+  })();
+  return all
+    .filter(b => {
+      if (b.status === 'Cancelled') return false;
+      if (b.status !== 'Completed') return true;
+      const refDate = b.bookingDate || (b.createdAt ? String(b.createdAt).slice(0, 10) : '');
+      return refDate >= thirtyDaysAgo;
+    })
+    .sort((a, b) => {
+      const aActive = a.status !== 'Completed';
+      const bActive = b.status !== 'Completed';
+      if (aActive && !bActive) return -1;
+      if (!aActive && bActive) return 1;
+      if (aActive) {
+        return (a.bookingDate || '').localeCompare(b.bookingDate || '');
+      }
+      return (b.bookingDate || '').localeCompare(a.bookingDate || '');
+    });
+}
+
+// WhatsApp list rows are capped at 24 chars; we try to fit inside that here so
+// whatsappService doesn't silently truncate the date/status tail.
+function formatBookingListLabel(b: Booking, lang: Language): string {
+  const test = (b.testNames && b.testNames[0]) || 'Booking';
+  const date = b.bookingDate ? formatDateLabel(b.bookingDate, lang) : '—';
+  const label = `${test} • ${date} • ${b.status}`;
+  if (label.length <= 24) return label;
+  const tail = ` • ${date} • ${b.status}`;
+  const maxTest = 24 - tail.length;
+  if (maxTest > 1) return `${test.slice(0, maxTest - 1)}…${tail}`;
+  return label.slice(0, 24);
+}
+
+// Lists up to 9 bookings + the Back button (WhatsApp lists max 10 rows). On
+// empty result, drops the user back to MAIN_MENU with t.noBookings.
+async function renderMyBookings(
+  phone: string,
+  session: BotSession,
+  addResponse: (text: string, buttons?: string[]) => void,
+  t: (typeof TRANSLATIONS)[Language],
+): Promise<void> {
+  const lang = session.language || 'en';
+  const bookings = await fetchCustomerBookings(phone);
+  if (bookings.length === 0) {
+    session.step = 'MAIN_MENU';
+    session.myBookingsCache = [];
+    addResponse(t.noBookings, [t.backToMainMenu]);
+    return;
+  }
+  const entries: BookingListEntry[] = bookings.slice(0, 9).map(b => ({
+    bookingId: b.bookingId,
+    label: formatBookingListLabel(b, lang),
+  }));
+  session.myBookingsCache = entries;
+  addResponse(t.myBookingsHeader, [...entries.map(e => e.label), t.backToMainMenu]);
+}
+
+// Re-fetches the booking the customer drilled into, builds the detail message,
+// and decides which actions to expose based on status + 3-hour rule.
+async function renderBookingDetail(
+  session: BotSession,
+  addResponse: (text: string, buttons?: string[]) => void,
+  t: (typeof TRANSLATIONS)[Language],
+): Promise<void> {
+  const lang = session.language || 'en';
+  if (!session.activeBookingId) {
+    // Nothing to show — re-render the list instead.
+    session.step = 'MY_BOOKINGS_LIST';
+    return;
+  }
+  const snap = await adminDb.collection('bookings').doc(session.activeBookingId).get();
+  if (!snap.exists) {
+    session.activeBookingId = undefined;
+    session.step = 'MY_BOOKINGS_LIST';
+    addResponse(t.noBookings, [t.backToMainMenu]);
+    return;
+  }
+  const booking = { ...(snap.data() as Booking), bookingId: snap.id };
+  const dateLabel = booking.bookingDate ? formatDateLabel(booking.bookingDate, lang) : '—';
+  const detail = t.bookingDetailHeader
+    .replace('{patientName}', booking.patientName || '—')
+    .replace('{testNames}', (booking.testNames || []).join(', '))
+    .replace('{date}', dateLabel)
+    .replace('{slot}', booking.timeSlot || '—')
+    .replace('{status}', booking.status)
+    .replace('{address}', booking.patientAddress || '—');
+
+  const cancellable = isCancellable(booking);
+  const inWindow = isWithinCustomerActionWindow(booking);
+
+  if (cancellable && inWindow) {
+    addResponse(detail, [t.bookingActionCancel, t.bookingActionReschedule, t.bookingActionBack]);
+    return;
+  }
+  // Reason for blocking — show the more relevant message.
+  if (!cancellable) {
+    addResponse(detail, [t.bookingActionBack]);
+    addResponse(t.cancelStatusBlocked, [t.bookingActionBack]);
+  } else {
+    addResponse(detail, [t.bookingActionBack]);
+    addResponse(t.cancelTooLate, [t.bookingActionBack]);
+  }
+}
+
 export async function handleWhatsAppMessage(
   from: string,
   incomingBody: string,
@@ -194,7 +328,7 @@ export async function handleWhatsAppMessage(
   const normalizedVal = value.toLowerCase();
 
   // Handle Global Actions
-  const isGlobalMenuAction = ['menu', 'home', 'restart'].includes(normalizedVal) ||
+  const isGlobalMenuAction = ['menu', 'home', 'restart', 'my bookings', 'bookings'].includes(normalizedVal) ||
                              value === t.mainMenu ||
                              value === t.backToMainMenu ||
                              value === t.options.book ||
@@ -202,7 +336,8 @@ export async function handleWhatsAppMessage(
                              value === t.options.medicine ||
                              value === t.options.faq ||
                              value === t.options.call ||
-                             value === t.options.support;
+                             value === t.options.support ||
+                             value === t.options.myBookings;
 
   if (isGlobalMenuAction) {
     if (value === t.options.book) {
@@ -233,6 +368,9 @@ export async function handleWhatsAppMessage(
     } else if (value === t.options.support) {
       session.step = 'MAIN_MENU';
       addResponse(t.supportResponse, [t.backToMainMenu]);
+    } else if (value === t.options.myBookings || normalizedVal === 'my bookings' || normalizedVal === 'bookings') {
+      session.step = 'MY_BOOKINGS_LIST';
+      await renderMyBookings(from, session, addResponse, t);
     } else {
       session.step = 'MAIN_MENU';
       session.isOnlyChecking = false;
@@ -316,6 +454,9 @@ export async function handleWhatsAppMessage(
         addResponse(t.callCaremolMessage.replace(/\{phone\}/g, phone), [t.backToMainMenu]);
       } else if (value === t.options.support) {
         addResponse(t.supportResponse, [t.backToMainMenu]);
+      } else if (value === t.options.myBookings) {
+        session.step = 'MY_BOOKINGS_LIST';
+        await renderMyBookings(from, session, addResponse, t);
       } else if (value === t.changeLanguage) {
         session.step = 'LANGUAGE_SELECTION';
         addResponse(t.selectLabel, ['English', 'മലയാളം']);
@@ -745,6 +886,401 @@ export async function handleWhatsAppMessage(
         addResponse(t.returningHeader, (Object.values(t.options) as string[]).concat([t.changeLanguage, t.endSession]));
       }
       break;
+
+    case 'MY_BOOKINGS_LIST': {
+      const cache = session.myBookingsCache || [];
+      const match = cache.find(e => e.label === value);
+      if (match) {
+        session.activeBookingId = match.bookingId;
+        session.step = 'BOOKING_DETAIL';
+        await renderBookingDetail(session, addResponse, t);
+      } else {
+        // Cache miss or user typed something off-menu — re-render the list.
+        await renderMyBookings(from, session, addResponse, t);
+      }
+      break;
+    }
+
+    case 'BOOKING_DETAIL': {
+      if (value === t.bookingActionBack) {
+        session.step = 'MY_BOOKINGS_LIST';
+        await renderMyBookings(from, session, addResponse, t);
+        break;
+      }
+      if (!session.activeBookingId) {
+        session.step = 'MY_BOOKINGS_LIST';
+        await renderMyBookings(from, session, addResponse, t);
+        break;
+      }
+
+      if (value === t.bookingActionCancel) {
+        // Re-check at the moment of action to catch races (admin moved status
+        // forward while the customer sat on the screen).
+        const snap = await adminDb.collection('bookings').doc(session.activeBookingId).get();
+        if (!snap.exists) {
+          session.activeBookingId = undefined;
+          session.step = 'MY_BOOKINGS_LIST';
+          await renderMyBookings(from, session, addResponse, t);
+          break;
+        }
+        const booking = { ...(snap.data() as Booking), bookingId: snap.id };
+        if (!isCancellable(booking)) {
+          addResponse(t.cancelStatusBlocked, [t.bookingActionBack]);
+          break;
+        }
+        if (!isWithinCustomerActionWindow(booking)) {
+          addResponse(t.cancelTooLate, [t.bookingActionBack]);
+          break;
+        }
+        session.step = 'BOOKING_CANCEL_REASON';
+        addResponse(t.cancelReasonPrompt, [t.bookingActionBack]);
+        break;
+      }
+
+      if (value === t.bookingActionReschedule) {
+        const snap = await adminDb.collection('bookings').doc(session.activeBookingId).get();
+        if (!snap.exists) {
+          session.activeBookingId = undefined;
+          session.step = 'MY_BOOKINGS_LIST';
+          await renderMyBookings(from, session, addResponse, t);
+          break;
+        }
+        const booking = { ...(snap.data() as Booking), bookingId: snap.id };
+        if (!booking.bookingDate) {
+          addResponse(t.rescheduleLegacyBlocked, [t.bookingActionBack]);
+          break;
+        }
+        if (!isCancellable(booking)) {
+          addResponse(t.cancelStatusBlocked, [t.bookingActionBack]);
+          break;
+        }
+        if (!isWithinCustomerActionWindow(booking)) {
+          addResponse(t.cancelTooLate, [t.bookingActionBack]);
+          break;
+        }
+        const cfg = await loadBookingConfig();
+        const dates = bookableDates(cfg);
+        const dateLabels = dates.map(d => formatDateLabel(d, session.language || 'en'));
+        session.step = 'BOOKING_RESCHEDULE_DATE';
+        addResponse(t.rescheduleDatePrompt, [...dateLabels, t.bookingActionBack]);
+        break;
+      }
+
+      // Anything else → re-render the detail.
+      await renderBookingDetail(session, addResponse, t);
+      break;
+    }
+
+    case 'BOOKING_CANCEL_REASON': {
+      if (value === t.bookingActionBack) {
+        session.step = 'BOOKING_DETAIL';
+        await renderBookingDetail(session, addResponse, t);
+        break;
+      }
+      if (normalizedVal === 'skip' || value === t.cancelReasonSkip) {
+        session.cancelDraftReason = '';
+      } else {
+        session.cancelDraftReason = value.trim();
+      }
+      if (!session.activeBookingId) {
+        session.step = 'MY_BOOKINGS_LIST';
+        await renderMyBookings(from, session, addResponse, t);
+        break;
+      }
+      const snap = await adminDb.collection('bookings').doc(session.activeBookingId).get();
+      if (!snap.exists) {
+        session.activeBookingId = undefined;
+        session.step = 'MY_BOOKINGS_LIST';
+        await renderMyBookings(from, session, addResponse, t);
+        break;
+      }
+      const booking = { ...(snap.data() as Booking), bookingId: snap.id };
+      const lang = session.language || 'en';
+      const dateLabel = booking.bookingDate ? formatDateLabel(booking.bookingDate, lang) : '—';
+      const prompt = t.cancelConfirmPrompt
+        .replace('{patientName}', booking.patientName || '—')
+        .replace('{date}', dateLabel)
+        .replace('{slot}', booking.timeSlot || '—');
+      session.step = 'BOOKING_CANCEL_CONFIRM';
+      addResponse(prompt, [t.cancelConfirmYes, t.cancelConfirmNo]);
+      break;
+    }
+
+    case 'BOOKING_CANCEL_CONFIRM': {
+      if (value === t.cancelConfirmNo) {
+        session.step = 'BOOKING_DETAIL';
+        session.cancelDraftReason = undefined;
+        await renderBookingDetail(session, addResponse, t);
+        break;
+      }
+      if (value === t.cancelConfirmYes) {
+        if (!session.activeBookingId) {
+          session.step = 'MY_BOOKINGS_LIST';
+          await renderMyBookings(from, session, addResponse, t);
+          break;
+        }
+        const snap = await adminDb.collection('bookings').doc(session.activeBookingId).get();
+        if (!snap.exists) {
+          session.activeBookingId = undefined;
+          session.step = 'MY_BOOKINGS_LIST';
+          await renderMyBookings(from, session, addResponse, t);
+          break;
+        }
+        const booking = { ...(snap.data() as Booking), bookingId: snap.id };
+        if (!isCancellable(booking)) {
+          session.step = 'BOOKING_DETAIL';
+          addResponse(t.cancelStatusBlocked, [t.bookingActionBack]);
+          break;
+        }
+        if (!isWithinCustomerActionWindow(booking)) {
+          session.step = 'BOOKING_DETAIL';
+          addResponse(t.cancelTooLate, [t.bookingActionBack]);
+          break;
+        }
+        try {
+          await adminDb.collection('bookings').doc(session.activeBookingId).update({
+            status: 'Cancelled',
+            cancelledBy: `customer:${from}`,
+            cancelledByRole: 'customer',
+            cancelledAt: new Date().toISOString(),
+            cancellationReason: session.cancelDraftReason || null,
+          });
+        } catch (err) {
+          console.error('[Bot] cancel write failed', err);
+          addResponse(t.bookingFailed, [t.backToMainMenu]);
+          session.step = 'MAIN_MENU';
+          break;
+        }
+        session.activeBookingId = undefined;
+        session.cancelDraftReason = undefined;
+        session.step = 'MAIN_MENU';
+        addResponse(t.cancelSuccess, [t.backToMainMenu]);
+        break;
+      }
+      // Anything else → re-prompt with the same confirm message.
+      if (session.activeBookingId) {
+        const snap = await adminDb.collection('bookings').doc(session.activeBookingId).get();
+        if (snap.exists) {
+          const booking = { ...(snap.data() as Booking), bookingId: snap.id };
+          const lang = session.language || 'en';
+          const dateLabel = booking.bookingDate ? formatDateLabel(booking.bookingDate, lang) : '—';
+          const prompt = t.cancelConfirmPrompt
+            .replace('{patientName}', booking.patientName || '—')
+            .replace('{date}', dateLabel)
+            .replace('{slot}', booking.timeSlot || '—');
+          addResponse(prompt, [t.cancelConfirmYes, t.cancelConfirmNo]);
+        }
+      }
+      break;
+    }
+
+    case 'BOOKING_RESCHEDULE_DATE': {
+      if (value === t.bookingActionBack) {
+        session.step = 'BOOKING_DETAIL';
+        await renderBookingDetail(session, addResponse, t);
+        break;
+      }
+      const cfg = await loadBookingConfig();
+      const dates = bookableDates(cfg);
+      const dateLabels = dates.map(d => formatDateLabel(d, session.language || 'en'));
+      const idx = dateLabels.indexOf(value);
+      if (idx >= 0) {
+        const chosenDate = dates[idx];
+        session.rescheduleDraft = {
+          bookingDate: chosenDate,
+          slotStart: '',
+          slotEnd: '',
+          timeSlot: '',
+        };
+        session.step = 'BOOKING_RESCHEDULE_SLOT';
+        const bookable = filterBookableSlots(slotsForDate(cfg, chosenDate), chosenDate);
+        const slotLabels = bookable.map(s => formatSlotLabel(s, session.language || 'en'));
+        addResponse(t.rescheduleSlotPrompt, [...slotLabels, t.bookingActionBack]);
+      } else {
+        addResponse(t.rescheduleDatePrompt, [...dateLabels, t.bookingActionBack]);
+      }
+      break;
+    }
+
+    case 'BOOKING_RESCHEDULE_SLOT': {
+      if (value === t.bookingActionBack) {
+        const cfg = await loadBookingConfig();
+        const dates = bookableDates(cfg);
+        const dateLabels = dates.map(d => formatDateLabel(d, session.language || 'en'));
+        session.step = 'BOOKING_RESCHEDULE_DATE';
+        addResponse(t.rescheduleDatePrompt, [...dateLabels, t.bookingActionBack]);
+        break;
+      }
+      if (!session.rescheduleDraft || !session.activeBookingId) {
+        session.step = 'MY_BOOKINGS_LIST';
+        await renderMyBookings(from, session, addResponse, t);
+        break;
+      }
+      const cfg = await loadBookingConfig();
+      const chosenDate = session.rescheduleDraft.bookingDate;
+      const bookable = filterBookableSlots(slotsForDate(cfg, chosenDate), chosenDate);
+      const slotLabels = bookable.map(s => formatSlotLabel(s, session.language || 'en'));
+      const idx = slotLabels.indexOf(value);
+      if (idx >= 0) {
+        const slot = bookable[idx];
+        session.rescheduleDraft = {
+          bookingDate: chosenDate,
+          slotStart: slot.start,
+          slotEnd: slot.end,
+          timeSlot: value,
+        };
+        const snap = await adminDb.collection('bookings').doc(session.activeBookingId).get();
+        if (!snap.exists) {
+          session.activeBookingId = undefined;
+          session.rescheduleDraft = undefined;
+          session.step = 'MY_BOOKINGS_LIST';
+          await renderMyBookings(from, session, addResponse, t);
+          break;
+        }
+        const booking = { ...(snap.data() as Booking), bookingId: snap.id };
+        const lang = session.language || 'en';
+        const oldDateLabel = booking.bookingDate ? formatDateLabel(booking.bookingDate, lang) : '—';
+        const newDateLabel = formatDateLabel(chosenDate, lang);
+        const prompt = t.rescheduleConfirmPrompt
+          .replace('{oldDate}', oldDateLabel)
+          .replace('{oldSlot}', booking.timeSlot || '—')
+          .replace('{newDate}', newDateLabel)
+          .replace('{newSlot}', value);
+        session.step = 'BOOKING_RESCHEDULE_CONFIRM';
+        addResponse(prompt, [t.rescheduleConfirmYes, t.rescheduleConfirmNo]);
+      } else {
+        addResponse(t.rescheduleSlotPrompt, [...slotLabels, t.bookingActionBack]);
+      }
+      break;
+    }
+
+    case 'BOOKING_RESCHEDULE_CONFIRM': {
+      if (value === t.rescheduleConfirmNo) {
+        session.rescheduleDraft = undefined;
+        session.step = 'BOOKING_DETAIL';
+        await renderBookingDetail(session, addResponse, t);
+        break;
+      }
+      if (value === t.rescheduleConfirmYes) {
+        if (!session.activeBookingId || !session.rescheduleDraft) {
+          session.step = 'MY_BOOKINGS_LIST';
+          await renderMyBookings(from, session, addResponse, t);
+          break;
+        }
+        const draft = session.rescheduleDraft;
+        const snap = await adminDb.collection('bookings').doc(session.activeBookingId).get();
+        if (!snap.exists) {
+          session.activeBookingId = undefined;
+          session.rescheduleDraft = undefined;
+          session.step = 'MY_BOOKINGS_LIST';
+          await renderMyBookings(from, session, addResponse, t);
+          break;
+        }
+        const booking = { ...(snap.data() as Booking), bookingId: snap.id };
+        if (!isCancellable(booking)) {
+          session.step = 'BOOKING_DETAIL';
+          addResponse(t.cancelStatusBlocked, [t.bookingActionBack]);
+          break;
+        }
+        if (!isWithinCustomerActionWindow(booking)) {
+          session.step = 'BOOKING_DETAIL';
+          addResponse(t.cancelTooLate, [t.bookingActionBack]);
+          break;
+        }
+
+        // Compute whether the currently-assigned phleb can keep this booking.
+        // Default to false on any read error so we never silently double-book.
+        let keepPhleb = false;
+        try {
+          const [phlebsSnap, availSnap, dateBookingsSnap] = await Promise.all([
+            adminDb.collection('staff').where('role', '==', 'phlebotomist').where('active', '==', true).get(),
+            adminDb.collection('phlebAvailability').where('date', '==', draft.bookingDate).get(),
+            adminDb.collection('bookings').where('bookingDate', '==', draft.bookingDate).get(),
+          ]);
+          const phlebs = phlebsSnap.docs.map(d => ({ ...(d.data() as Staff), uid: d.id }));
+          const phlebAvailMap: Record<string, PhlebAvailability | null> = {};
+          availSnap.docs.forEach(d => {
+            const data = d.data() as PhlebAvailability;
+            if (data.phlebotomistUid) {
+              phlebAvailMap[phlebAvailabilityDocId(draft.bookingDate, data.phlebotomistUid)] = data;
+            }
+          });
+          const otherBookings = dateBookingsSnap.docs.map(d => ({
+            ...(d.data() as Booking),
+            bookingId: d.id,
+          }));
+          keepPhleb = canPhlebKeepBooking(
+            booking.bookingId,
+            booking.assignedTo,
+            draft.bookingDate,
+            draft.slotStart,
+            phlebs,
+            phlebAvailMap,
+            otherBookings,
+          );
+        } catch (err) {
+          console.warn('[Bot] keep-phleb check failed; defaulting to unassign', err);
+          keepPhleb = false;
+        }
+
+        const patch: Record<string, unknown> = {
+          bookingDate: draft.bookingDate,
+          slotStart: draft.slotStart,
+          slotEnd: draft.slotEnd,
+          timeSlot: draft.timeSlot,
+          rescheduledAt: new Date().toISOString(),
+          rescheduledBy: `customer:${from}`,
+          rescheduledByRole: 'customer',
+          previousBookingDate: booking.bookingDate ?? null,
+          previousSlotStart: booking.slotStart ?? null,
+          previousSlotEnd: booking.slotEnd ?? null,
+          previousTimeSlot: booking.timeSlot ?? null,
+        };
+        if (!keepPhleb && booking.assignedTo) {
+          patch.assignedTo = null;
+          patch.assignedToName = null;
+          patch.status = 'Created';
+        }
+
+        try {
+          await adminDb.collection('bookings').doc(session.activeBookingId).update(patch);
+        } catch (err) {
+          console.error('[Bot] reschedule write failed', err);
+          addResponse(t.bookingFailed, [t.backToMainMenu]);
+          session.step = 'MAIN_MENU';
+          break;
+        }
+
+        const lang = session.language || 'en';
+        const newDateLabel = formatDateLabel(draft.bookingDate, lang);
+        const newSlotLabel = draft.timeSlot;
+        session.activeBookingId = undefined;
+        session.rescheduleDraft = undefined;
+        session.step = 'MAIN_MENU';
+        addResponse(
+          t.rescheduleSuccess.replace('{newDate}', newDateLabel).replace('{newSlot}', newSlotLabel),
+          [t.backToMainMenu],
+        );
+        break;
+      }
+      // Anything else → re-render the confirm prompt.
+      if (session.activeBookingId && session.rescheduleDraft) {
+        const snap = await adminDb.collection('bookings').doc(session.activeBookingId).get();
+        if (snap.exists) {
+          const booking = { ...(snap.data() as Booking), bookingId: snap.id };
+          const lang = session.language || 'en';
+          const oldDateLabel = booking.bookingDate ? formatDateLabel(booking.bookingDate, lang) : '—';
+          const newDateLabel = formatDateLabel(session.rescheduleDraft.bookingDate, lang);
+          const prompt = t.rescheduleConfirmPrompt
+            .replace('{oldDate}', oldDateLabel)
+            .replace('{oldSlot}', booking.timeSlot || '—')
+            .replace('{newDate}', newDateLabel)
+            .replace('{newSlot}', session.rescheduleDraft.timeSlot);
+          addResponse(prompt, [t.rescheduleConfirmYes, t.rescheduleConfirmNo]);
+        }
+      }
+      break;
+    }
   }
 
   session.lastActive = new Date().toISOString();

@@ -1,10 +1,11 @@
 export type Language = 'en' | 'ml';
 
-export type BookingStatus = 'Created' | 'Assigned' | 'Collected' | 'Processing' | 'Completed';
+export type BookingStatus = 'Created' | 'Assigned' | 'Collected' | 'Processing' | 'Completed' | 'Cancelled';
 
 export const STATUS_ORDER: BookingStatus[] = ['Created', 'Assigned', 'Collected', 'Processing', 'Completed'];
 
 export function isBackward(from: BookingStatus, to: BookingStatus): boolean {
+  if (to === 'Cancelled' || from === 'Cancelled') return false;
   return STATUS_ORDER.indexOf(to) < STATUS_ORDER.indexOf(from);
 }
 
@@ -49,6 +50,28 @@ export interface Booking {
   language?: Language;          // captured at booking time so the confirmation message uses the right locale.
   bookingSource?: BookingSource; // omit/undefined or 'whatsapp' for bot bookings; 'manual' for dashboard bookings.
   createdBy?: string;            // staff uid that created a manual booking.
+
+  // Cancellation audit — set when status transitions to 'Cancelled'.
+  cancelledBy?: string;             // staff uid, or 'customer:<phone>' for customer cancellations
+  cancelledByRole?: 'admin' | 'phlebotomist' | 'customer';
+  cancelledAt?: string;             // ISO timestamp
+  cancellationReason?: string;      // null/undefined when customer didn't provide one
+
+  // Phleb-initiated cancellation request — held until admin approves/rejects.
+  // status stays 'Assigned' while these flags are set.
+  cancellationRequested?: boolean;
+  cancellationRequestedBy?: string; // phleb uid
+  cancellationRequestedAt?: string;
+  cancellationRequestReason?: string;
+
+  // Reschedule audit — overwritten on each reschedule (only latest tracked).
+  rescheduledAt?: string;
+  rescheduledBy?: string;
+  rescheduledByRole?: 'admin' | 'customer';
+  previousBookingDate?: string;
+  previousSlotStart?: string;
+  previousSlotEnd?: string;
+  previousTimeSlot?: string;
 }
 
 // Weekly default working slots for a phlebotomist. Each array holds slotStart
@@ -164,4 +187,33 @@ export type ChatStep =
   | 'PAYMENT'
   | 'COMPLETED'
   | 'MEDICINE_DELIVERY'
-  | 'FAQ';
+  | 'FAQ'
+  | 'MY_BOOKINGS_LIST'
+  | 'BOOKING_DETAIL'
+  | 'BOOKING_CANCEL_REASON'
+  | 'BOOKING_CANCEL_CONFIRM'
+  | 'BOOKING_RESCHEDULE_DATE'
+  | 'BOOKING_RESCHEDULE_SLOT'
+  | 'BOOKING_RESCHEDULE_CONFIRM';
+
+export const CANCELLABLE_STATUSES: BookingStatus[] = ['Created', 'Assigned'];
+
+export function isCancellable(b: Pick<Booking, 'status'>): boolean {
+  return CANCELLABLE_STATUSES.includes(b.status);
+}
+
+/** Customer 3-hour rule. Returns true if `now` is at least 3 hours before
+ *  the booking's IST slot start. Legacy bookings (no bookingDate or slotStart)
+ *  are always cancellable by the customer (no time to compare against). */
+export function isWithinCustomerActionWindow(
+  b: Pick<Booking, 'bookingDate' | 'slotStart'>,
+  now: Date = new Date()
+): boolean {
+  if (!b.bookingDate || !b.slotStart) return true;
+  // Construct an IST instant from the date + slotStart. The +05:30 offset
+  // is fixed (India has no DST).
+  const slotIST = new Date(`${b.bookingDate}T${b.slotStart}:00+05:30`);
+  if (Number.isNaN(slotIST.getTime())) return true; // malformed → fail-open
+  const cutoffMs = slotIST.getTime() - 3 * 60 * 60 * 1000;
+  return now.getTime() <= cutoffMs;
+}

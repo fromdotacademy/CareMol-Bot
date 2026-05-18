@@ -5,6 +5,7 @@
 // and feed the resulting docs into the pure functions here.
 
 import type {
+  Booking,
   BookingConfig,
   Language,
   PhlebAvailability,
@@ -191,6 +192,65 @@ export function isSlotInEffectiveSchedule(
   slotStart: string,
 ): boolean {
   return effectiveSlotsFromDocs(staff, override, isoDate).includes(slotStart);
+}
+
+/** Pure: can the booking's currently-assigned phleb keep this booking when
+ *  it's rescheduled to (newDate, newSlotStart)?
+ *  - Returns true iff the phleb is scheduled to work that slot AND no other
+ *    non-Completed booking already occupies (phleb, newDate, newSlotStart).
+ *  - Returns false if the booking has no assigned phleb (caller should just
+ *    leave assignedTo cleared and bump status back to 'Created').
+ */
+export function canPhlebKeepBooking(
+  bookingId: string,
+  assignedTo: string | undefined,
+  newDate: string,
+  newSlotStart: string,
+  phlebs: Staff[],
+  phlebAvailMap: Record<string, PhlebAvailability | null>,
+  allBookings: Pick<Booking, 'bookingId' | 'assignedTo' | 'bookingDate' | 'slotStart' | 'status'>[],
+): boolean {
+  if (!assignedTo) return false;
+  const phleb = phlebs.find(p => p.uid === assignedTo);
+  if (!phleb) return false;
+  const override = phlebAvailMap[phlebAvailabilityDocId(newDate, assignedTo)] ?? null;
+  if (!isSlotInEffectiveSchedule(phleb, override, newDate, newSlotStart)) return false;
+  const conflict = allBookings.find(other =>
+    other.bookingId !== bookingId &&
+    other.assignedTo === assignedTo &&
+    other.bookingDate === newDate &&
+    other.slotStart === newSlotStart &&
+    other.status !== 'Completed' &&
+    other.status !== 'Cancelled'
+  );
+  return !conflict;
+}
+
+/** Pure: slots from a date's template, annotated with the list of phlebs who
+ *  could take each slot. Used by the admin reschedule modal to show only
+ *  realistically assignable slots. */
+export function slotsWithAvailablePhlebs(
+  isoDate: string,
+  slots: SlotConfig[],
+  phlebs: Staff[],
+  phlebAvailMap: Record<string, PhlebAvailability | null>,
+  allBookings: Pick<Booking, 'bookingId' | 'assignedTo' | 'bookingDate' | 'slotStart' | 'status'>[],
+): Array<{ slot: SlotConfig; availablePhlebs: Staff[] }> {
+  return slots.map(slot => {
+    const availablePhlebs = phlebs.filter(p => {
+      const override = phlebAvailMap[phlebAvailabilityDocId(isoDate, p.uid)] ?? null;
+      if (!isSlotInEffectiveSchedule(p, override, isoDate, slot.start)) return false;
+      const conflict = allBookings.find(other =>
+        other.assignedTo === p.uid &&
+        other.bookingDate === isoDate &&
+        other.slotStart === slot.start &&
+        other.status !== 'Completed' &&
+        other.status !== 'Cancelled'
+      );
+      return !conflict;
+    });
+    return { slot, availablePhlebs };
+  });
 }
 
 // ============================================================================

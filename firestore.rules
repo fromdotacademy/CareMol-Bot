@@ -43,7 +43,7 @@ service cloud.firestore {
     function isValidBooking(data) {
       return data.keys().hasAll(['bookingId', 'userId', 'patientName', 'status', 'createdAt']) &&
              data.userId == request.auth.uid &&
-             data.status in ['Created', 'Assigned', 'Collected', 'Processing', 'Completed'];
+             data.status in ['Created', 'Assigned', 'Collected', 'Processing', 'Completed', 'Cancelled'];
     }
 
     // Booking written by admin/phleb on behalf of a customer. Drops the
@@ -115,10 +115,32 @@ service cloud.firestore {
          existing().status == 'Created' &&
          incoming().diff(existing()).affectedKeys().hasOnly(['patientName', 'patientAge', 'patientGender', 'patientAddress', 'patientPhone', 'testNames', 'timeSlot', 'bookingDate', 'slotStart', 'slotEnd', 'isFastingConfirmed', 'price']) &&
          isValidBooking(incoming()))
+        ||
+        // Owner: cancel booking when status is Created OR Assigned. 3-hour
+        // cutoff is enforced client-side; rules gate on the status floor.
+        (isSignedIn() && existing().userId == request.auth.uid &&
+         existing().status in ['Created', 'Assigned'] &&
+         incoming().status == 'Cancelled' &&
+         incoming().diff(existing()).affectedKeys().hasOnly(['status', 'cancelledBy', 'cancelledByRole', 'cancelledAt', 'cancellationReason']))
+        ||
+        // Owner: reschedule (change date/slot) when status is Created OR
+        // Assigned. Phleb retention is decided client-side; rules permit
+        // both same-phleb and unassign cases.
+        (isSignedIn() && existing().userId == request.auth.uid &&
+         existing().status in ['Created', 'Assigned'] &&
+         incoming().diff(existing()).affectedKeys().hasOnly(['bookingDate', 'slotStart', 'slotEnd', 'timeSlot', 'rescheduledAt', 'rescheduledBy', 'rescheduledByRole', 'previousBookingDate', 'previousSlotStart', 'previousSlotEnd', 'previousTimeSlot', 'assignedTo', 'assignedToName', 'status']))
       ) || (
         // Admin: status, price, assignedTo (incl. reassignment), priority, and
-        // date/slot rescheduling.
-        isAdmin() && incoming().diff(existing()).affectedKeys().hasOnly(['status', 'price', 'assignedTo', 'assignedToName', 'priority', 'testNames', 'customTests', 'notes', 'bookingDate', 'slotStart', 'slotEnd', 'timeSlot'])
+        // date/slot rescheduling. Includes cancel + reschedule audit fields.
+        isAdmin() && incoming().diff(existing()).affectedKeys().hasOnly([
+          'status', 'price', 'assignedTo', 'assignedToName', 'priority',
+          'testNames', 'customTests', 'notes',
+          'bookingDate', 'slotStart', 'slotEnd', 'timeSlot',
+          'cancelledBy', 'cancelledByRole', 'cancelledAt', 'cancellationReason',
+          'cancellationRequested', 'cancellationRequestedBy', 'cancellationRequestedAt', 'cancellationRequestReason',
+          'rescheduledAt', 'rescheduledBy', 'rescheduledByRole',
+          'previousBookingDate', 'previousSlotStart', 'previousSlotEnd', 'previousTimeSlot'
+        ])
       ) || (
         // Phlebotomist: self-assign an unclaimed 'Created' booking.
         isPhlebotomist() &&
@@ -134,6 +156,18 @@ service cloud.firestore {
         incoming().assignedTo == request.auth.uid &&
         phlebStatusOK() &&
         incoming().diff(existing()).affectedKeys().hasOnly(['testNames', 'customTests', 'price', 'status', 'notes'])
+      ) || (
+        // Phlebotomist: REQUEST cancellation of their own assigned booking.
+        // They cannot set status to Cancelled directly — only flag it.
+        isPhlebotomist() &&
+        existing().assignedTo == request.auth.uid &&
+        existing().status == 'Assigned' &&
+        incoming().status == 'Assigned' &&
+        incoming().diff(existing()).affectedKeys().hasOnly([
+          'cancellationRequested', 'cancellationRequestedBy', 'cancellationRequestedAt', 'cancellationRequestReason'
+        ]) &&
+        incoming().cancellationRequested == true &&
+        incoming().cancellationRequestedBy == request.auth.uid
       );
     }
 

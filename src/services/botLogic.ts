@@ -32,6 +32,14 @@ export interface BotSession {
   bookingData: Partial<Booking>;
   isOnlyChecking: boolean;
   lastActive: string;
+  activeBookingId?: string;
+  rescheduleDraft?: {
+    bookingDate: string;
+    slotStart: string;
+    slotEnd: string;
+    timeSlot: string;
+  };
+  cancelDraftReason?: string;
 }
 
 export interface BotResponse {

@@ -2239,6 +2239,7 @@ const STATUS_COLORS: Record<BookingStatus, { bg: string; ring: string; dot: stri
   Collected:  { bg: 'bg-blue-500',   ring: 'ring-blue-300',    dot: 'bg-blue-500',    label: 'Collected' },
   Processing: { bg: 'bg-violet-500', ring: 'ring-violet-300',  dot: 'bg-violet-500',  label: 'Processing' },
   Completed:  { bg: 'bg-emerald-500',ring: 'ring-emerald-300', dot: 'bg-emerald-500', label: 'Completed' },
+  Cancelled:  { bg: 'bg-rose-500',   ring: 'ring-rose-300',    dot: 'bg-rose-500',    label: 'Cancelled' },
 };
 
 const WEEKDAY_SHORT = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
@@ -2265,7 +2266,7 @@ function AnalyticsView({ bookings }: { bookings: Booking[] }) {
   const completionPct = total ? Math.round((100 * completedCount) / total) : 0;
 
   const statusCounts: Record<BookingStatus, number> = {
-    Created: 0, Assigned: 0, Collected: 0, Processing: 0, Completed: 0,
+    Created: 0, Assigned: 0, Collected: 0, Processing: 0, Completed: 0, Cancelled: 0,
   };
   for (const b of filtered) statusCounts[b.status] = (statusCounts[b.status] || 0) + 1;
 

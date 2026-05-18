@@ -2,6 +2,12 @@ export type Language = 'en' | 'ml';
 
 export type BookingStatus = 'Created' | 'Assigned' | 'Collected' | 'Processing' | 'Completed';
 
+export const STATUS_ORDER: BookingStatus[] = ['Created', 'Assigned', 'Collected', 'Processing', 'Completed'];
+
+export function isBackward(from: BookingStatus, to: BookingStatus): boolean {
+  return STATUS_ORDER.indexOf(to) < STATUS_ORDER.indexOf(from);
+}
+
 export type Priority = 'high' | 'medium' | 'low';
 
 export type StaffRole = 'admin' | 'phlebotomist';

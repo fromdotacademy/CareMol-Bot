@@ -274,6 +274,7 @@ export function NewBookingModal({ staffRole, staffName, onClose }: NewBookingMod
         .filter((c) => c.name && c.price > 0);
       const trimmedNotes = notes.trim();
 
+      const preAssign = assignToMe && staffRole === "phlebotomist";
       const payload: Record<string, unknown> = {
         bookingId,
         patientId,
@@ -290,7 +291,10 @@ export function NewBookingModal({ staffRole, staffName, onClose }: NewBookingMod
         bookingDate,
         slotStart,
         slotEnd: selectedSlot?.end || "",
-        status: "Created",
+        // When the creating phleb ticks "Assign to me", start the booking in
+        // Assigned state so it lands directly in their queue and never lingers
+        // in the invisible Created+assignedTo limbo state.
+        status: preAssign ? "Assigned" : "Created",
         price: computeBookingTotal(selectedPackages, cleanCustom, ecgAddon),
         paymentMethod,
         isFastingConfirmed,
@@ -300,7 +304,7 @@ export function NewBookingModal({ staffRole, staffName, onClose }: NewBookingMod
         createdBy: me.uid,
       };
       if (trimmedNotes) payload.notes = trimmedNotes;
-      if (assignToMe && staffRole === "phlebotomist") {
+      if (preAssign) {
         payload.assignedTo = me.uid;
         payload.assignedToName = staffName;
       }

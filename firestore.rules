@@ -52,9 +52,13 @@ service cloud.firestore {
     // bot-created records.
     function isValidStaffBooking(data) {
       return data.keys().hasAll(['bookingId', 'userId', 'patientName', 'status', 'createdAt', 'bookingSource', 'createdBy']) &&
-             data.status == 'Created' &&
+             data.status in ['Created', 'Assigned'] &&
              data.bookingSource == 'manual' &&
-             data.createdBy == request.auth.uid;
+             data.createdBy == request.auth.uid &&
+             // When pre-assigned at creation, the assignee MUST be the creator
+             // (audit guarantee: an admin/phleb can only self-assign at create
+             // time, never pre-assign a different staff member).
+             (data.status == 'Created' || data.get('assignedTo', '') == request.auth.uid);
     }
 
     // Status transitions a phlebotomist is allowed to perform.
@@ -78,7 +82,10 @@ service cloud.firestore {
       );
 
       match /patients/{patientId} {
-        allow read, write: if isOwner(userId) || isAdmin();
+        // Phlebs need write access here to create manual bookings on behalf of
+        // a customer — the NewBookingModal upserts a patient profile under
+        // users/{phone}/patients/{patientId} before writing the booking itself.
+        allow read, write: if isOwner(userId) || isAdmin() || isPhlebotomist();
       }
     }
 

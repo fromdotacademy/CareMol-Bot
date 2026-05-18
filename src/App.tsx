@@ -77,7 +77,8 @@ import {
   cartPackagesList,
   formatPackageDetail,
 } from './constants';
-import { Booking, BookingStatus, CustomTest, Language, ChatStep, PatientProfile, Staff, StaffRole, BookingConfig, PhlebAvailability, WeeklySchedule, SlotConfig } from './types';
+import { Booking, BookingStatus, CustomTest, Language, ChatStep, PatientProfile, Staff, StaffRole, BookingConfig, PhlebAvailability, WeeklySchedule, SlotConfig, isBackward } from './types';
+import { ConfirmDialog, type ConfirmConfig } from './ui/ConfirmDialog';
 import { buildBookingConfirmation } from './services/confirmationMessage';
 import { upsertPatientWeb } from './services/patientService';
 import { NewBookingModal } from './components/NewBookingModal';
@@ -226,6 +227,7 @@ export function DashboardView({ tab: tabProp, onTabChange, onError }: { tab?: Ad
   const [editingBookingId, setEditingBookingId] = useState<string | null>(null);
   const [overrideForBooking, setOverrideForBooking] = useState<Set<string>>(new Set());
   const [newBookingOpen, setNewBookingOpen] = useState(false);
+  const [pendingConfirm, setPendingConfirm] = useState<ConfirmConfig | null>(null);
   const config = useBookingConfig();
 
   useEffect(() => {
@@ -425,6 +427,113 @@ export function DashboardView({ tab: tabProp, onTabChange, onError }: { tab?: Ad
         onError(err);
       }
     }
+  };
+
+  // Confirmation-gated status change. Routine forward steps (Created→Assigned,
+  // Assigned→Collected, Collected→Processing) go straight through; transitions
+  // to Completed, any backward step, and any change from Completed prompt the
+  // admin first. The dropdowns are value-bound to b.status from the live
+  // snapshot, so a cancelled change reverts automatically without optimistic
+  // state.
+  const requestStatusChange = (b: Booking, newStatus: BookingStatus) => {
+    if (newStatus === b.status) return;
+    const wasCompleted = b.status === 'Completed';
+    const goingToCompleted = newStatus === 'Completed';
+    const backward = isBackward(b.status, newStatus);
+    if (!goingToCompleted && !wasCompleted && !backward) {
+      updateStatus(b.bookingId, newStatus);
+      return;
+    }
+    if (wasCompleted) {
+      setPendingConfirm({
+        variant: 'danger',
+        title: 'Revert a completed booking?',
+        body: (
+          <>
+            This booking is already <b>Completed</b> and a report-ready notification was sent to the customer.
+            Reverting to <b>{newStatus}</b> may confuse them. Continue?
+          </>
+        ),
+        confirmLabel: `Revert to ${newStatus}`,
+        onConfirm: () => updateStatus(b.bookingId, newStatus),
+      });
+      return;
+    }
+    if (goingToCompleted) {
+      setPendingConfirm({
+        title: 'Mark this booking Completed?',
+        body: 'The customer will be notified that their report is ready.',
+        confirmLabel: 'Mark Completed',
+        onConfirm: () => updateStatus(b.bookingId, newStatus),
+      });
+      return;
+    }
+    setPendingConfirm({
+      title: 'Roll this booking back?',
+      body: (
+        <>Roll status back from <b>{b.status}</b> to <b>{newStatus}</b>?</>
+      ),
+      confirmLabel: `Roll back to ${newStatus}`,
+      onConfirm: () => updateStatus(b.bookingId, newStatus),
+    });
+  };
+
+  const requestAssignment = (b: Booking, phleb: Staff | null) => {
+    const currentUid = b.assignedTo || null;
+    const nextUid = phleb?.uid || null;
+    if (currentUid === nextUid) return;
+    if (!phleb) {
+      setPendingConfirm({
+        title: 'Un-assign this booking?',
+        body: (
+          <>
+            Remove <b>{b.assignedToName || 'the current phlebotomist'}</b> and return this booking
+            to the unassigned queue (status will revert to Created)?
+          </>
+        ),
+        confirmLabel: 'Un-assign',
+        onConfirm: () => assignBooking(b, null),
+      });
+      return;
+    }
+    if (currentUid) {
+      const downgradeNote = b.status !== 'Created' && b.status !== 'Assigned' ? (
+        <> The booking will move back to status <b>Assigned</b> (currently <b>{b.status}</b>).</>
+      ) : null;
+      setPendingConfirm({
+        title: 'Reassign this booking?',
+        body: (
+          <>
+            Reassign from <b>{b.assignedToName || 'previous phleb'}</b> to <b>{phleb.name}</b>?{downgradeNote}
+          </>
+        ),
+        confirmLabel: 'Reassign',
+        onConfirm: () => assignBooking(b, phleb),
+      });
+      return;
+    }
+    setPendingConfirm({
+      title: `Assign to ${phleb.name}?`,
+      body: <>This booking will move to <b>{phleb.name}</b>&rsquo;s assigned queue.</>,
+      confirmLabel: 'Assign',
+      onConfirm: () => assignBooking(b, phleb),
+    });
+  };
+
+  // Self-heal helper for legacy bookings stuck in Created+assignedTo state.
+  // Shown inline next to the status badge when the inconsistent pair is detected.
+  const requestSyncStatus = (b: Booking) => {
+    setPendingConfirm({
+      title: 'Sync status to Assigned?',
+      body: (
+        <>
+          This booking is assigned to <b>{b.assignedToName || 'a phlebotomist'}</b> but its status is still
+          <b> Created</b>, so it&rsquo;s invisible to them. Flip the status to <b>Assigned</b>?
+        </>
+      ),
+      confirmLabel: 'Sync to Assigned',
+      onConfirm: () => updateStatus(b.bookingId, 'Assigned'),
+    });
   };
 
   return (
@@ -667,7 +776,7 @@ export function DashboardView({ tab: tabProp, onTabChange, onError }: { tab?: Ad
                     <div className="space-y-2">
                       <select
                         value={b.status}
-                        onChange={(e) => updateStatus(b.bookingId, e.target.value as BookingStatus)}
+                        onChange={(e) => requestStatusChange(b, e.target.value as BookingStatus)}
                         className={cn(
                           "text-sm font-medium tracking-tight py-1 pl-3 pr-7 rounded-full cursor-pointer outline-none transition-colors appearance-none",
                           "bg-no-repeat bg-[right_0.5rem_center] bg-[length:10px]",
@@ -684,6 +793,15 @@ export function DashboardView({ tab: tabProp, onTabChange, onError }: { tab?: Ad
                         <option value="Processing">Processing</option>
                         <option value="Completed">Completed</option>
                       </select>
+                      {b.status === 'Created' && b.assignedTo && (
+                        <button
+                          onClick={() => requestSyncStatus(b)}
+                          className="flex items-center gap-1 text-[11px] font-bold text-amber-700 hover:underline"
+                          title="This booking has a phleb assigned but its status is still Created — it won't appear in the phleb's queue."
+                        >
+                          <AlertTriangle className="w-3 h-3" /> Inconsistent — sync to Assigned
+                        </button>
+                      )}
                       {(() => {
                         const { phlebs: assignable, reason } = getAssignablePhlebs(b);
                         // Ensure currently assigned (even if outside filter) stays selectable so admin doesn't lose track.
@@ -696,7 +814,7 @@ export function DashboardView({ tab: tabProp, onTabChange, onError }: { tab?: Ad
                               value={b.assignedTo || ''}
                               onChange={(e) => {
                                 const phleb = phlebotomists.find(p => p.uid === e.target.value) || null;
-                                assignBooking(b, phleb);
+                                requestAssignment(b, phleb);
                               }}
                               title="Assign phlebotomist"
                               className="text-xs font-bold py-1 px-2 rounded border border-border-subtle bg-white cursor-pointer outline-none w-full max-w-[160px]"
@@ -771,7 +889,7 @@ export function DashboardView({ tab: tabProp, onTabChange, onError }: { tab?: Ad
                       </button>
                       {b.status === 'Processing' && (
                         <button
-                          onClick={() => updateStatus(b.bookingId, 'Completed')}
+                          onClick={() => requestStatusChange(b, 'Completed')}
                           className="flex items-center gap-2 px-3 py-1.5 bg-primary text-white text-xs font-bold uppercase tracking-wider rounded-lg shadow-lg shadow-primary/20 hover:scale-105 transition-all"
                         >
                           <FileUp className="w-3 h-3" />
@@ -824,7 +942,7 @@ export function DashboardView({ tab: tabProp, onTabChange, onError }: { tab?: Ad
                 </div>
                 <select
                   value={b.status}
-                  onChange={(e) => updateStatus(b.bookingId, e.target.value as BookingStatus)}
+                  onChange={(e) => requestStatusChange(b, e.target.value as BookingStatus)}
                   className={cn(
                     "text-xs font-medium tracking-tight py-1.5 pl-3 pr-7 rounded-full cursor-pointer outline-none transition-colors appearance-none shrink-0",
                     "bg-no-repeat bg-[right_0.5rem_center] bg-[length:10px]",
@@ -842,6 +960,15 @@ export function DashboardView({ tab: tabProp, onTabChange, onError }: { tab?: Ad
                   <option value="Completed">Completed</option>
                 </select>
               </div>
+              {b.status === 'Created' && b.assignedTo && (
+                <button
+                  onClick={() => requestSyncStatus(b)}
+                  className="flex items-center gap-1 text-[11px] font-bold text-amber-700 hover:underline"
+                  title="This booking has a phleb assigned but its status is still Created."
+                >
+                  <AlertTriangle className="w-3 h-3" /> Inconsistent — sync to Assigned
+                </button>
+              )}
 
               {/* Tests + logistics */}
               <div className="space-y-1.5 pt-2 border-t border-[var(--color-border-subtle)]">
@@ -911,7 +1038,7 @@ export function DashboardView({ tab: tabProp, onTabChange, onError }: { tab?: Ad
                         value={b.assignedTo || ''}
                         onChange={(e) => {
                           const phleb = phlebotomists.find(p => p.uid === e.target.value) || null;
-                          assignBooking(b, phleb);
+                          requestAssignment(b, phleb);
                         }}
                         title="Assign phlebotomist"
                         className="w-full text-xs font-bold py-2 px-3 rounded-md border border-border-subtle bg-white cursor-pointer outline-none"
@@ -981,7 +1108,7 @@ export function DashboardView({ tab: tabProp, onTabChange, onError }: { tab?: Ad
               </div>
               {b.status === 'Processing' && (
                 <button
-                  onClick={() => updateStatus(b.bookingId, 'Completed')}
+                  onClick={() => requestStatusChange(b, 'Completed')}
                   className="w-full inline-flex items-center justify-center gap-2 py-3 bg-primary text-white text-sm font-bold uppercase tracking-wider rounded-lg shadow-lg shadow-primary/20 hover:opacity-90 transition-opacity"
                 >
                   <FileUp className="w-4 h-4" /> Upload Report
@@ -1013,6 +1140,8 @@ export function DashboardView({ tab: tabProp, onTabChange, onError }: { tab?: Ad
           onClose={() => setNewBookingOpen(false)}
         />
       )}
+
+      <ConfirmDialog pending={pendingConfirm} onClose={() => setPendingConfirm(null)} />
     </div>
   );
 }
@@ -2796,6 +2925,7 @@ export function PhlebotomistDashboard({ user, onError }: { user: FirebaseUser; o
   const [editingBookingId, setEditingBookingId] = useState<string | null>(null);
   const [showCompleted, setShowCompleted] = useState(false);
   const [newBookingOpen, setNewBookingOpen] = useState(false);
+  const [pendingConfirm, setPendingConfirm] = useState<ConfirmConfig | null>(null);
   const config = useBookingConfig();
   const { staff: ownStaff } = useOwnStaff(user);
 
@@ -2881,6 +3011,31 @@ export function PhlebotomistDashboard({ user, onError }: { user: FirebaseUser; o
     }
   };
 
+  // Confirmation wrappers. Only the "claim" and "mark completed" actions prompt
+  // — routine forward steps (Assigned→Collected, Collected→Processing) go
+  // straight through to keep the field workflow snappy.
+  const requestSelfAssign = (b: Booking) => {
+    setPendingConfirm({
+      title: 'Claim this booking?',
+      body: <>It will move from the unassigned queue to your <b>Assigned</b> list.</>,
+      confirmLabel: 'Claim',
+      onConfirm: () => selfAssign(b),
+    });
+  };
+
+  const requestTransition = (b: Booking, next: BookingStatus) => {
+    if (next !== 'Completed') {
+      transition(b, next);
+      return;
+    }
+    setPendingConfirm({
+      title: 'Mark this booking Completed?',
+      body: 'The customer will be notified that their report is ready.',
+      confirmLabel: 'Mark Completed',
+      onConfirm: () => transition(b, next),
+    });
+  };
+
   const saveTests = async (b: Booking, newTests: string[]) => {
     const ecgAddon = eligibleForEcgAddon(newTests) ? (b.ecgAddon ?? false) : false;
     const newPrice = computeBookingPrice(newTests, ecgAddon);
@@ -2963,9 +3118,9 @@ export function PhlebotomistDashboard({ user, onError }: { user: FirebaseUser; o
                 booking={b}
                 mode="assigned"
                 onEditTests={() => setEditingBookingId(b.bookingId)}
-                onMarkCollected={() => transition(b, 'Collected')}
-                onMarkProcessing={() => transition(b, 'Processing')}
-                onMarkCompleted={() => transition(b, 'Completed')}
+                onMarkCollected={() => requestTransition(b, 'Collected')}
+                onMarkProcessing={() => requestTransition(b, 'Processing')}
+                onMarkCompleted={() => requestTransition(b, 'Completed')}
               />
             ))}
           </div>
@@ -2987,7 +3142,7 @@ export function PhlebotomistDashboard({ user, onError }: { user: FirebaseUser; o
                 key={b.bookingId}
                 booking={b}
                 mode="queue"
-                onSelfAssign={() => selfAssign(b)}
+                onSelfAssign={() => requestSelfAssign(b)}
               />
             ))}
           </div>
@@ -3022,6 +3177,8 @@ export function PhlebotomistDashboard({ user, onError }: { user: FirebaseUser; o
           onClose={() => setNewBookingOpen(false)}
         />
       )}
+
+      <ConfirmDialog pending={pendingConfirm} onClose={() => setPendingConfirm(null)} />
     </div>
   );
 }

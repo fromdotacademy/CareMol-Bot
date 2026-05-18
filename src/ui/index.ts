@@ -7,6 +7,8 @@ export type { InputProps, SelectProps, TextareaProps } from './Input';
 export { Badge, bookingStatusTone } from './Badge';
 export type { BadgeTone } from './Badge';
 export { Modal } from './Modal';
+export { ConfirmDialog } from './ConfirmDialog';
+export type { ConfirmConfig, ConfirmVariant } from './ConfirmDialog';
 export {
   TableScroll,
   Table,

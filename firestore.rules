@@ -125,9 +125,16 @@ service cloud.firestore {
         ||
         // Owner: reschedule (change date/slot) when status is Created OR
         // Assigned. Phleb retention is decided client-side; rules permit
-        // both same-phleb and unassign cases.
+        // both same-phleb (no assignedTo change) and unassign (set to null)
+        // cases. Status is constrained to the two legitimate post-reschedule
+        // values so the owner can't bypass the phleb workflow.
         (isSignedIn() && existing().userId == request.auth.uid &&
          existing().status in ['Created', 'Assigned'] &&
+         incoming().status in ['Created', 'Assigned'] &&
+         (incoming().get('assignedTo', null) == existing().get('assignedTo', null) ||
+          incoming().get('assignedTo', null) == null) &&
+         (incoming().get('assignedToName', null) == existing().get('assignedToName', null) ||
+          incoming().get('assignedToName', null) == null) &&
          incoming().diff(existing()).affectedKeys().hasOnly(['bookingDate', 'slotStart', 'slotEnd', 'timeSlot', 'rescheduledAt', 'rescheduledBy', 'rescheduledByRole', 'previousBookingDate', 'previousSlotStart', 'previousSlotEnd', 'previousTimeSlot', 'assignedTo', 'assignedToName', 'status']))
       ) || (
         // Admin: status, price, assignedTo (incl. reassignment), priority, and

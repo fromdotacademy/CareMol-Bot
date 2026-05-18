@@ -21,7 +21,7 @@ There is no test framework configured. `security_spec.md` describes the rules-te
 
 Copy `.env.example` to `.env` and set:
 
-- `GEMINI_API_KEY` — used by `src/services/geminiService.ts` to parse free-form patient details.
+- `DEEPSEEK_API_KEY` — used by `src/services/aiParserService.ts` to parse free-form patient details via DeepSeek (`deepseek-chat`). DeepSeek has no free tier; add credit at platform.deepseek.com. The webhook falls back to a strict comma-split parser if the call fails for any reason.
 - `WHATSAPP_TOKEN`, `WHATSAPP_PHONE_ID` — WhatsApp Cloud API (Graph v17.0). When missing, `sendWhatsAppMessage` warns and no-ops, so the webhook is testable without credentials.
 - `VERIFY_TOKEN` — webhook verification challenge (defaults to `caremol_verify_token`).
 - `VITE_GOOGLE_MAPS_API_KEY` — read by `mapsService.ts` (note: it is checked on both `process.env` and `import.meta.env` to work on server and client).
@@ -57,8 +57,8 @@ If you add new routes that depend on the heavy services, register them **inside*
 
 The chatbot flow exists **twice** and the two copies must be kept in sync:
 
-- `src/services/botLogic.ts` — authoritative server-side state machine driven by the WhatsApp webhook. Persists `BotSession` per phone number in Firestore `whatsapp_sessions/{phone}`. Uses Gemini (`parsePatientDetails`) to extract `Name, Age, Phone` from free text.
-- `src/App.tsx` → `WhatsAppSimulator` component — a client-side reimplementation of the same `ChatStep` state machine for the in-dashboard simulator. It does **not** call the webhook; it does simple comma-split parsing instead of Gemini and writes directly to Firestore via the web SDK (a comment in the file flags this divergence).
+- `src/services/botLogic.ts` — authoritative server-side state machine driven by the WhatsApp webhook. Persists `BotSession` per phone number in Firestore `whatsapp_sessions/{phone}`. Uses DeepSeek via `parsePatientDetails` (in `aiParserService.ts`) to extract `Name, Age, Phone` from free text, with a strict comma-split fallback when the AI call fails (missing key, quota, network).
+- `src/App.tsx` → `WhatsAppSimulator` component — a client-side reimplementation of the same `ChatStep` state machine for the in-dashboard simulator. It does **not** call the webhook; it does simple comma-split parsing instead of DeepSeek and writes directly to Firestore via the web SDK (a comment in the file flags this divergence).
 
 When you change conversation behavior (new step, new button, new translation key), update **both** files. `ChatStep`, the translation tables, and `TEST_PRICES` are shared via `src/types.ts` and `src/constants.ts`.
 

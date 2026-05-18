@@ -12,7 +12,6 @@
     "lint": "tsc --noEmit && tsx scripts/check-button-limits.ts"
   },
   "dependencies": {
-    "@google/genai": "^1.29.0",
     "@tailwindcss/vite": "^4.1.14",
     "@types/express": "^4.17.21",
     "@types/node": "^22.14.0",

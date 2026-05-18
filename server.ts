@@ -7,6 +7,8 @@ import { handleWhatsAppMessage } from "./src/services/botLogic.js";
 import { sendWhatsAppMessage } from "./src/services/whatsappService.js";
 import { HARDCODED_ADMIN_EMAILS } from "./src/lib/adminEmails.js";
 import { buildBookingConfirmation } from "./src/services/confirmationMessage.js";
+import { TRANSLATIONS } from "./src/constants.js";
+import { formatDateLabel } from "./src/services/slotService.js";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -174,6 +176,100 @@ async function init() {
         }
       } catch (err: any) {
         console.error("[POST /api/bookings/:id/notify]", err);
+        return res.status(500).json({ error: err.message || String(err) });
+      }
+    });
+
+    // Bot notify — admin-only endpoint to send a WhatsApp message to the customer
+    // when their booking is cancelled or rescheduled. The dashboard writes the
+    // cancel/reschedule audit fields to Firestore FIRST, then POSTs here. This
+    // endpoint reads all message-formatting data from the booking doc itself.
+    app.post("/api/bot/notify", async (req, res) => {
+      try {
+        const authHeader = req.headers.authorization || "";
+        const idToken = authHeader.startsWith("Bearer ") ? authHeader.slice(7) : "";
+        if (!idToken) return res.status(401).json({ error: "Missing token" });
+
+        let decoded;
+        try {
+          decoded = await admin.auth().verifyIdToken(idToken);
+        } catch {
+          return res.status(401).json({ error: "Invalid token" });
+        }
+
+        // Admin-only (NOT isStaff — phlebs cannot call this).
+        const callerEmail = decoded.email || "";
+        let isAdmin = HARDCODED_ADMIN_EMAILS.has(callerEmail);
+        if (!isAdmin) {
+          const callerStaff = await adminDb.collection("staff").doc(decoded.uid).get();
+          const data = callerStaff.exists ? callerStaff.data() : null;
+          isAdmin = !!(data && data.role === "admin" && data.active === true);
+        }
+        if (!isAdmin) return res.status(403).json({ error: "Admins only" });
+
+        const { bookingId, kind } = (req.body || {}) as { bookingId?: string; kind?: string };
+        if (!bookingId) return res.status(400).json({ error: "Missing booking id" });
+        if (!kind) return res.status(400).json({ error: "Missing kind" });
+        if (kind !== "cancelled" && kind !== "rescheduled") {
+          return res.status(400).json({ error: "Invalid kind" });
+        }
+
+        const snap = await adminDb.collection("bookings").doc(String(bookingId)).get();
+        if (!snap.exists) return res.status(404).json({ error: "Booking not found" });
+        const booking = snap.data() as any;
+
+        const recipient = booking.userId || booking.patientPhone;
+        if (!recipient) return res.status(400).json({ error: "Booking has no phone to notify" });
+
+        const lang: "en" | "ml" = booking.language === "ml" ? "ml" : "en";
+        const t = TRANSLATIONS[lang];
+
+        // Fallback strings keep us from crashing on legacy bookings without
+        // bookingDate / timeSlot. Kept literal here rather than introducing new
+        // translation keys mid-task; the message still flows cleanly.
+        const fallbackDate = lang === "ml" ? "നിശ്ചയിച്ച തീയതി" : "the scheduled date";
+        const fallbackSlot = lang === "ml" ? "നിശ്ചയിച്ച സ്ലോട്ട്" : "the scheduled slot";
+        const fallbackOldDate = lang === "ml" ? "മുൻ തീയതി" : "the previous date";
+        const fallbackOldSlot = lang === "ml" ? "മുൻ സ്ലോട്ട്" : "the previous slot";
+
+        let message: string;
+        if (kind === "cancelled") {
+          const tpl = booking.cancelledByRole === "phlebotomist"
+            ? t.notifyCancelledByPhleb
+            : t.notifyCancelledByAdmin;
+          const date = booking.bookingDate ? formatDateLabel(String(booking.bookingDate), lang) : fallbackDate;
+          const slot = booking.timeSlot || fallbackSlot;
+          const reason = typeof booking.cancellationReason === "string" ? booking.cancellationReason.trim() : "";
+          const reasonClause = reason ? t.reasonClausePrefix.replace("{reason}", reason) : "";
+          message = tpl
+            .replace("{date}", date)
+            .replace("{slot}", slot)
+            .replace("{reasonClause}", reasonClause);
+        } else {
+          const tpl = t.notifyRescheduledByAdmin;
+          const oldDate = booking.previousBookingDate ? formatDateLabel(String(booking.previousBookingDate), lang) : fallbackOldDate;
+          const oldSlot = booking.previousTimeSlot || fallbackOldSlot;
+          const newDate = booking.bookingDate ? formatDateLabel(String(booking.bookingDate), lang) : fallbackDate;
+          const newSlot = booking.timeSlot || fallbackSlot;
+          message = tpl
+            .replace("{oldDate}", oldDate)
+            .replace("{oldSlot}", oldSlot)
+            .replace("{newDate}", newDate)
+            .replace("{newSlot}", newSlot);
+        }
+
+        if (!process.env.WHATSAPP_TOKEN || !process.env.WHATSAPP_PHONE_ID) {
+          return res.json({ ok: true, sent: false, reason: "no-whatsapp-creds" });
+        }
+
+        try {
+          await sendWhatsAppMessage(String(recipient), message);
+          return res.json({ ok: true, sent: true });
+        } catch (e: any) {
+          return res.status(502).json({ ok: false, sent: false, error: e.message || String(e) });
+        }
+      } catch (err: any) {
+        console.error("[POST /api/bot/notify]", err);
         return res.status(500).json({ error: err.message || String(err) });
       }
     });

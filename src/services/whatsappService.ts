@@ -124,9 +124,6 @@ export async function sendWhatsAppMessage(to: string, message: string, buttons?:
       );
     }
   } catch (error: any) {
-    console.error('Error sending WhatsApp message:', JSON.stringify(error.response?.data || error.message, null, 2));
-    if (imageUrl) {
-      console.error('  └─ message had imageUrl:', imageUrl);
-    }
+    console.error('Error sending WhatsApp message:', error.response?.data || error.message);
   }
 }

@@ -260,7 +260,17 @@ export function buildPackageCatalogFallback(lang: SupportedLanguage): string {
     lines.push(`• *${name}* — ${price}`);
   }
   lines.push('');
-  lines.push(lang === 'ml' ? 'തുടരാൻ ചുവടെ ടാപ്പ് ചെയ്യുക.' : 'Tap below to continue.');
+  if (lang === 'ml') {
+    lines.push('🌐 വെബ്സൈറ്റ്: https://www.caremol.in');
+    lines.push('🩺 സൗജന്യ ഹെൽത്ത് അസെസ്മെന്റ്: https://assessment.caremol.in');
+    lines.push('');
+    lines.push('തുടരാൻ ചുവടെ ടാപ്പ് ചെയ്യുക.');
+  } else {
+    lines.push('🌐 Website: https://www.caremol.in');
+    lines.push('🩺 Free health assessment: https://assessment.caremol.in');
+    lines.push('');
+    lines.push('Tap below to continue.');
+  }
   return lines.join('\n');
 }
 
@@ -288,7 +298,7 @@ export const TRANSLATIONS = {
     selectLabel: "Please select your language",
     languageSelectPrompt: "👋 Welcome to CareMol – Care Close to You\nPlease select your language / നിങ്ങളുടെ ഭാഷ തിരഞ്ഞെടുക്കുക:",
     menuHeader: "We provide home sample collection within 5 km of Melattur 🏠\nHow can I help you?",
-    packageCatalogBody: "Here are our health packages — choose the right one for you. Tap *Continue* to proceed.",
+    packageCatalogBody: "Here are our health packages — choose the right one for you.\n\n🌐 Visit our website: https://www.caremol.in\n🩺 Free health assessment: https://assessment.caremol.in\n\nTap *Continue* to proceed.",
     packageCatalogContinue: "Continue",
     options: {
       book: "🏠 Home Sample Test",
@@ -461,7 +471,7 @@ export const TRANSLATIONS = {
     selectLabel: "നിങ്ങളുടെ ഭാഷ തിരഞ്ഞെടുക്കുക",
     languageSelectPrompt: "👋 Welcome to CareMol – Care Close to You\nPlease select your language / നിങ്ങളുടെ ഭാഷ തിരഞ്ഞെടുക്കുക:",
     menuHeader: "Melattur ചുറ്റുമുള്ള 5 km പരിധിയിൽ home sample collection ലഭ്യമാണ് 🏠\nനിങ്ങളെ എങ്ങനെ സഹായിക്കാം?",
-    packageCatalogBody: "ഞങ്ങളുടെ ഹെൽത്ത് പാക്കേജുകൾ ഇതാ — നിങ്ങൾക്ക് അനുയോജ്യമായത് തിരഞ്ഞെടുക്കൂ. തുടരാൻ *തുടരുക* ടാപ്പ് ചെയ്യുക.",
+    packageCatalogBody: "ഞങ്ങളുടെ ഹെൽത്ത് പാക്കേജുകൾ ഇതാ — നിങ്ങൾക്ക് അനുയോജ്യമായത് തിരഞ്ഞെടുക്കൂ.\n\n🌐 ഞങ്ങളുടെ വെബ്സൈറ്റ് സന്ദർശിക്കൂ: https://www.caremol.in\n🩺 സൗജന്യ ഹെൽത്ത് അസെസ്മെന്റിന്: https://assessment.caremol.in\n\nതുടരാൻ *തുടരുക* ടാപ്പ് ചെയ്യുക.",
     packageCatalogContinue: "തുടരുക",
     options: {
       book: "🏠 സാമ്പിൾ ബുക്ക്",

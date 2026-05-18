@@ -62,9 +62,6 @@ export interface BotResponse {
   imageUrl?: string;
 }
 
-const PACKAGE_CATALOG_IMAGE_EN = process.env.PACKAGE_CATALOG_IMAGE_EN || '';
-const PACKAGE_CATALOG_IMAGE_ML = process.env.PACKAGE_CATALOG_IMAGE_ML || '';
-
 // Loads config/booking via the Admin SDK, with the ~60s in-memory cache from
 // slotService. Falls back to defaults if the doc is absent or read fails so the
 // bot keeps working before the seed script runs.
@@ -425,10 +422,9 @@ export async function handleWhatsAppMessage(
         session.language = lang;
         session.step = 'PACKAGE_CATALOG';
         const langT = TRANSLATIONS[lang];
-        const envEn = process.env.PACKAGE_CATALOG_IMAGE_EN || '';
-        const envMl = process.env.PACKAGE_CATALOG_IMAGE_ML || '';
-        const catalogImageUrl = lang === 'en' ? envEn : envMl;
-        console.log('[PACKAGE_CATALOG] lang=', lang, 'envEnSet=', !!envEn, 'envMlSet=', !!envMl, 'urlChosen=', catalogImageUrl ? catalogImageUrl.slice(0, 60) + '...' : '(empty)');
+        const catalogImageUrl = lang === 'en'
+          ? (process.env.PACKAGE_CATALOG_IMAGE_EN || '')
+          : (process.env.PACKAGE_CATALOG_IMAGE_ML || '');
         if (catalogImageUrl) {
           addResponse(langT.packageCatalogBody, [langT.packageCatalogContinue], catalogImageUrl);
         } else {

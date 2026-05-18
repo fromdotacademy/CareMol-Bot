@@ -3526,6 +3526,8 @@ export function PhlebotomistDashboard({ user, onError }: { user: FirebaseUser; o
   const [showCompleted, setShowCompleted] = useState(false);
   const [newBookingOpen, setNewBookingOpen] = useState(false);
   const [pendingConfirm, setPendingConfirm] = useState<ConfirmConfig | null>(null);
+  const [cancelRequestFor, setCancelRequestFor] = useState<Booking | null>(null);
+  const [cancelRequestReason, setCancelRequestReason] = useState('');
   const config = useBookingConfig();
   const { staff: ownStaff } = useOwnStaff(user);
 
@@ -3559,7 +3561,9 @@ export function PhlebotomistDashboard({ user, onError }: { user: FirebaseUser; o
     return onSnapshot(qCreated, (snap) => {
       const data = snap.docs
         .map(d => ({ ...d.data(), bookingId: d.id } as Booking))
-        .filter(b => !b.assignedTo);
+        // Defensive: status filter is already in the query, but spell out intent
+        // — cancelled bookings should never appear in the unassigned queue.
+        .filter(b => !b.assignedTo && b.status === 'Created');
       data.sort((a, b) => String(b.createdAt || '').localeCompare(String(a.createdAt || '')));
       setUnassigned(data);
     }, (error) => {
@@ -3569,7 +3573,15 @@ export function PhlebotomistDashboard({ user, onError }: { user: FirebaseUser; o
   }, [onError]);
 
   const todayISO = getISTToday();
-  const active = myBookings.filter(b => b.status === 'Assigned' || b.status === 'Collected' || b.status === 'Processing');
+  const active = myBookings.filter(b => {
+    if (b.status === 'Assigned' || b.status === 'Collected' || b.status === 'Processing') return true;
+    if (b.status === 'Cancelled') {
+      // Show cancellation heads-up only for today+future bookings so the phleb
+      // sees they don't need to go. Past cancellations disappear quietly.
+      return !b.bookingDate || b.bookingDate >= todayISO;
+    }
+    return false;
+  });
   const completedToday = myBookings.filter(b => {
     if (b.status !== 'Completed') return false;
     // Prefer bookingDate (the day the visit was scheduled for); fall back to
@@ -3651,6 +3663,24 @@ export function PhlebotomistDashboard({ user, onError }: { user: FirebaseUser; o
     }
   };
 
+  // Phleb-initiated cancel request — flags only; admin resolves the actual
+  // status transition. Matches the firestore rule clause: phleb may set the
+  // four cancellationRequest* fields, status stays at 'Assigned', and
+  // cancellationRequestedBy must equal their own uid.
+  const submitCancelRequest = async (b: Booking, reason: string) => {
+    try {
+      await updateDoc(doc(db, 'bookings', b.bookingId), {
+        cancellationRequested: true,
+        cancellationRequestedBy: user.uid,
+        cancellationRequestedAt: new Date().toISOString(),
+        cancellationRequestReason: reason.trim(),
+      });
+    } catch (e: any) {
+      try { handleFirestoreError(e, OperationType.UPDATE, `bookings/${b.bookingId}`); }
+      catch (err: any) { onError(err); }
+    }
+  };
+
   const editingBooking = editingBookingId
     ? [...myBookings, ...unassigned].find(b => b.bookingId === editingBookingId) || null
     : null;
@@ -3721,6 +3751,10 @@ export function PhlebotomistDashboard({ user, onError }: { user: FirebaseUser; o
                 onMarkCollected={() => requestTransition(b, 'Collected')}
                 onMarkProcessing={() => requestTransition(b, 'Processing')}
                 onMarkCompleted={() => requestTransition(b, 'Completed')}
+                onRequestCancel={() => {
+                  setCancelRequestReason('');
+                  setCancelRequestFor(b);
+                }}
               />
             ))}
           </div>
@@ -3776,6 +3810,81 @@ export function PhlebotomistDashboard({ user, onError }: { user: FirebaseUser; o
           staffName={user.displayName || user.email || "Phlebotomist"}
           onClose={() => setNewBookingOpen(false)}
         />
+      )}
+
+      {/* Request cancellation dialog — phleb supplies a non-empty reason,
+          admin resolves. Status stays at 'Assigned' until admin approves. */}
+      {cancelRequestFor && (
+        <div
+          className="fixed inset-0 z-50 bg-slate-900/60 flex items-end sm:items-center justify-center p-3 sm:p-6"
+          onClick={() => { setCancelRequestFor(null); setCancelRequestReason(''); }}
+        >
+          <div
+            className="bg-white rounded-2xl w-full max-w-md shadow-2xl border border-slate-200"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="p-5 border-b border-slate-200">
+              <div className="flex items-start gap-3">
+                <div className="w-9 h-9 rounded-full bg-rose-100 flex items-center justify-center shrink-0">
+                  <AlertTriangle className="w-5 h-5 text-rose-600" />
+                </div>
+                <div className="min-w-0 flex-1">
+                  <h3 className="text-base font-bold text-slate-900">Request cancellation</h3>
+                  <p className="text-sm text-slate-600 mt-0.5">
+                    <span className="font-medium">{cancelRequestFor.patientName}</span>
+                    {cancelRequestFor.bookingDate ? (
+                      <> · {formatDateLabel(cancelRequestFor.bookingDate, 'en')}</>
+                    ) : null}
+                    {cancelRequestFor.timeSlot ? <> · {cancelRequestFor.timeSlot}</> : null}
+                  </p>
+                </div>
+              </div>
+            </div>
+            <div className="p-5 space-y-3">
+              <label className="block text-sm font-medium text-slate-700">
+                Reason <span className="text-rose-600">*</span>
+              </label>
+              <textarea
+                value={cancelRequestReason}
+                onChange={(e) => setCancelRequestReason(e.target.value)}
+                placeholder="e.g. Patient not at home; test no longer needed; address unreachable"
+                rows={3}
+                className="w-full text-sm rounded-md border border-slate-300 px-3 py-2 outline-none focus:border-[var(--color-accent)] resize-none"
+                autoFocus
+              />
+              <p className="text-xs text-slate-500">
+                Admin will review and either approve or reject your request.
+              </p>
+            </div>
+            <div className="px-5 py-4 border-t border-slate-200 flex items-center justify-end gap-2">
+              <button
+                onClick={() => { setCancelRequestFor(null); setCancelRequestReason(''); }}
+                className="px-4 py-2 text-sm font-medium rounded-md text-slate-700 hover:bg-slate-100 transition-colors"
+              >
+                Close
+              </button>
+              <button
+                onClick={async () => {
+                  if (cancelRequestReason.trim().length === 0) return;
+                  const target = cancelRequestFor;
+                  const reason = cancelRequestReason;
+                  setCancelRequestFor(null);
+                  setCancelRequestReason('');
+                  await submitCancelRequest(target, reason);
+                }}
+                disabled={cancelRequestReason.trim().length === 0}
+                className={cn(
+                  "px-4 py-2 text-sm font-bold rounded-md transition-colors",
+                  cancelRequestReason.trim().length === 0
+                    ? "bg-slate-200 text-slate-400 cursor-not-allowed"
+                    : "bg-rose-600 text-white hover:bg-rose-700"
+                )}
+              >
+                Request cancellation
+              </button>
+            </div>
+          </div>
+        </div>
       )}
 
       <ConfirmDialog pending={pendingConfirm} onClose={() => setPendingConfirm(null)} />
@@ -3846,6 +3955,7 @@ function PhlebBookingCard({
   onMarkCollected,
   onMarkProcessing,
   onMarkCompleted,
+  onRequestCancel,
 }: {
   booking: Booking;
   mode: 'queue' | 'assigned' | 'completed';
@@ -3854,6 +3964,7 @@ function PhlebBookingCard({
   onMarkCollected?: () => void;
   onMarkProcessing?: () => void;
   onMarkCompleted?: () => void;
+  onRequestCancel?: () => void;
 }) {
   const priority = resolvePriority(booking);
   const mapsHref = booking.patientAddress
@@ -3948,7 +4059,7 @@ function PhlebBookingCard({
         )}
       </div>
 
-      {mode !== 'completed' && (
+      {mode !== 'completed' && booking.status !== 'Cancelled' && (
         <div className="flex items-center gap-2 flex-wrap pt-3 border-t border-[var(--color-border-subtle)]">
           {mode === 'queue' && (
             <button
@@ -3990,8 +4101,35 @@ function PhlebBookingCard({
                   Mark Completed
                 </button>
               )}
+              {/* Request-cancel control — only meaningful before the sample is
+                  collected. Replaced by a pending pill once requested; admin
+                  resolves (approve flips status → Cancelled, reject clears flags). */}
+              {booking.status === 'Assigned' && (
+                booking.cancellationRequested ? (
+                  <span className="inline-flex items-center gap-1 h-9 px-3 rounded-[var(--radius-md)] bg-rose-50 text-rose-700 ring-1 ring-inset ring-rose-200 text-xs font-medium">
+                    <Clock className="w-3.5 h-3.5" /> Cancellation pending admin approval
+                  </span>
+                ) : (
+                  <button
+                    onClick={onRequestCancel}
+                    className="inline-flex items-center justify-center h-9 px-3 bg-white text-rose-700 border border-rose-300 text-sm font-medium tracking-tight rounded-[var(--radius-md)] hover:bg-rose-50 transition-colors ml-auto"
+                  >
+                    Request cancellation
+                  </button>
+                )
+              )}
             </>
           )}
+        </div>
+      )}
+      {booking.status === 'Cancelled' && mode === 'assigned' && (
+        <div className="pt-3 border-t border-[var(--color-border-subtle)] flex items-center gap-2">
+          <span className="inline-flex items-center gap-1 text-[10.5px] px-2 py-0.5 rounded-full font-semibold tracking-[0.06em] uppercase bg-rose-50 text-rose-700 ring-1 ring-inset ring-rose-200">
+            Cancelled
+          </span>
+          <span className="text-xs text-[var(--color-text-secondary)]">
+            You don't need to visit — this booking was cancelled.
+          </span>
         </div>
       )}
     </div>

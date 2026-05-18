@@ -13,7 +13,7 @@ import { buildBookingConfirmation } from './confirmationMessage';
 import { isCoordInServiceArea, isPinInServiceArea, toServiceAreaConfig } from './serviceAreaService';
 import { generateId } from '../lib/utils';
 import { ChatStep, Language, Booking, BookingConfig, PatientProfile } from '../types';
-import { parsePatientDetails } from './geminiService';
+import { parsePatientDetails } from './aiParserService';
 import {
   defaultBookingConfig,
   rememberBookingConfig,
@@ -328,7 +328,7 @@ export async function handleWhatsAppMessage(
         const parts = value.split(',').map(s => s.trim()).filter(Boolean);
         const ageNum = parts[1] !== undefined ? parseInt(parts[1], 10) : NaN;
         if (parts.length >= 2 && parts[0] && !Number.isNaN(ageNum)) {
-          console.warn('[botLogic] Gemini parse failed — using comma-split fallback');
+          console.warn('[botLogic] AI parse failed — using comma-split fallback');
           details = {
             name: parts[0],
             age: ageNum,

@@ -13,7 +13,7 @@ import { buildBookingConfirmation } from './confirmationMessage';
 import { isCoordInServiceArea, isPinInServiceArea, toServiceAreaConfig } from './serviceAreaService';
 import { generateId } from '../lib/utils';
 import { ChatStep, Language, Booking, BookingConfig, PatientProfile } from '../types';
-import { parsePatientDetails } from './geminiService';
+import { parsePatientDetails } from './aiParserService';
 import {
   defaultBookingConfig,
   rememberBookingConfig,
@@ -315,15 +315,37 @@ export async function handleWhatsAppMessage(
       break;
 
     case 'PATIENT_DETAILS_ENTRY':
-      // Use Gemini to parse lead details
+      // Primary path: DeepSeek structured parse (handles free text, Malayalam, gender, etc.).
       const parsed = await parsePatientDetails(value);
-      if (parsed) {
-        const patientName = parsed.name;
-        const patientAge = parsed.age || 30; // Default age if not found
-        const patientPhone = parsed.phone || from; // Use sender's phone if not provided
+
+      // Fallback path: if Gemini fails for any reason (missing/invalid key, quota
+      // exhausted, network blocked, model deprecated, parse error), try a strict
+      // "Name, Age, Phone" comma split so the user isn't trapped in a re-ask loop.
+      // Matches the simulator's behavior in App.tsx for parity. Same shape as
+      // ExtractedPatientDetails so the downstream code below is unchanged.
+      let details = parsed;
+      if (!details) {
+        const parts = value.split(',').map(s => s.trim()).filter(Boolean);
+        const ageNum = parts[1] !== undefined ? parseInt(parts[1], 10) : NaN;
+        if (parts.length >= 2 && parts[0] && !Number.isNaN(ageNum)) {
+          console.warn('[botLogic] AI parse failed — using comma-split fallback');
+          details = {
+            name: parts[0],
+            age: ageNum,
+            phone: parts[2] || '',
+            isMale: false,
+            isFemale: false,
+          };
+        }
+      }
+
+      if (details) {
+        const patientName = details.name;
+        const patientAge = details.age || 30; // Default age if not found
+        const patientPhone = details.phone || from; // Use sender's phone if not provided
         let patientGender: 'Male' | 'Female' | 'Other' | undefined;
-        if (parsed.isMale) patientGender = 'Male';
-        else if (parsed.isFemale) patientGender = 'Female';
+        if (details.isMale) patientGender = 'Male';
+        else if (details.isFemale) patientGender = 'Female';
 
         // Create patient profile immediately (lead capture).
         // If we already have a patientId on this session (rare retry case),

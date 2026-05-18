@@ -315,7 +315,7 @@ export async function handleWhatsAppMessage(
       break;
 
     case 'PATIENT_DETAILS_ENTRY':
-      // Primary path: Gemini structured parse (handles free text, Malayalam, gender, etc.).
+      // Primary path: DeepSeek structured parse (handles free text, Malayalam, gender, etc.).
       const parsed = await parsePatientDetails(value);
 
       // Fallback path: if Gemini fails for any reason (missing/invalid key, quota

@@ -247,6 +247,23 @@ export function formatPackageDetail(pkg: PackageInfo, lang: SupportedLanguage): 
   return lines.filter(line => line !== null).join('\n');
 }
 
+export function buildPackageCatalogFallback(lang: SupportedLanguage): string {
+  const lines: string[] = [];
+  lines.push(lang === 'ml' ? '*ഞങ്ങളുടെ ഹെൽത്ത് പാക്കേജുകൾ*' : '*Our Health Packages*');
+  lines.push('');
+  const individual = PACKAGES.filter(p => p.category === 'individual');
+  const special = PACKAGES.filter(p => p.category === 'special');
+  for (const p of [...individual, ...special]) {
+    const name = lang === 'ml' ? p.name_ml : p.name_en;
+    const savings = p.mrp - p.price;
+    const price = savings > 0 ? `~₹${p.mrp}~ ₹${p.price}` : `₹${p.price}`;
+    lines.push(`• *${name}* — ${price}`);
+  }
+  lines.push('');
+  lines.push(lang === 'ml' ? 'തുടരാൻ ചുവടെ ടാപ്പ് ചെയ്യുക.' : 'Tap below to continue.');
+  return lines.join('\n');
+}
+
 // ─── Backward-compat derived exports (TestPickerModal + legacy reduce sites) ───
 
 /** @deprecated use getPackagePrice() */
@@ -271,6 +288,8 @@ export const TRANSLATIONS = {
     selectLabel: "Please select your language",
     languageSelectPrompt: "👋 Welcome to CareMol – Care Close to You\nPlease select your language / നിങ്ങളുടെ ഭാഷ തിരഞ്ഞെടുക്കുക:",
     menuHeader: "We provide home sample collection within 5 km of Melattur 🏠\nHow can I help you?",
+    packageCatalogBody: "Here are our health packages — choose the right one for you. Tap *Continue* to proceed.",
+    packageCatalogContinue: "Continue",
     options: {
       book: "🏠 Home Sample Test",
       medicine: "💊 Medicine",
@@ -442,6 +461,8 @@ export const TRANSLATIONS = {
     selectLabel: "നിങ്ങളുടെ ഭാഷ തിരഞ്ഞെടുക്കുക",
     languageSelectPrompt: "👋 Welcome to CareMol – Care Close to You\nPlease select your language / നിങ്ങളുടെ ഭാഷ തിരഞ്ഞെടുക്കുക:",
     menuHeader: "Melattur ചുറ്റുമുള്ള 5 km പരിധിയിൽ home sample collection ലഭ്യമാണ് 🏠\nനിങ്ങളെ എങ്ങനെ സഹായിക്കാം?",
+    packageCatalogBody: "ഞങ്ങളുടെ ഹെൽത്ത് പാക്കേജുകൾ ഇതാ — നിങ്ങൾക്ക് അനുയോജ്യമായത് തിരഞ്ഞെടുക്കൂ. തുടരാൻ *തുടരുക* ടാപ്പ് ചെയ്യുക.",
+    packageCatalogContinue: "തുടരുക",
     options: {
       book: "🏠 സാമ്പിൾ ബുക്ക്",
       medicine: "💊 മരുന്ന് ഡെലിവറി",

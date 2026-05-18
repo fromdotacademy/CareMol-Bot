@@ -159,6 +159,7 @@ export interface PatientProfile {
 
 export type ChatStep =
   | 'LANGUAGE_SELECTION'
+  | 'PACKAGE_CATALOG'
   | 'MAIN_MENU'
   | 'PACKAGE_VIEW'
   | 'PACKAGE_DETAIL_VIEW'

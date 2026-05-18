@@ -310,7 +310,7 @@ async function init() {
             if (text || location) {
               const responses = await handleWhatsAppMessage(from, text, location);
               for (const r of responses) {
-                await sendWhatsAppMessage(from, r.text, r.buttons);
+                await sendWhatsAppMessage(from, r.text, r.buttons, r.imageUrl);
               }
             }
           }

@@ -8,6 +8,7 @@ import {
   browserPackagesList,
   cartPackagesList,
   formatPackageDetail,
+  buildPackageCatalogFallback,
 } from '../constants';
 import { buildBookingConfirmation } from './confirmationMessage';
 import { isCoordInServiceArea, isPinInServiceArea, toServiceAreaConfig } from './serviceAreaService';
@@ -58,7 +59,11 @@ export interface BotSession {
 export interface BotResponse {
   text: string;
   buttons?: string[];
+  imageUrl?: string;
 }
+
+const PACKAGE_CATALOG_IMAGE_EN = process.env.PACKAGE_CATALOG_IMAGE_EN || '';
+const PACKAGE_CATALOG_IMAGE_ML = process.env.PACKAGE_CATALOG_IMAGE_ML || '';
 
 // Loads config/booking via the Admin SDK, with the ~60s in-memory cache from
 // slotService. Falls back to defaults if the doc is absent or read fails so the
@@ -319,8 +324,8 @@ export async function handleWhatsAppMessage(
   }
 
   const responses: BotResponse[] = [];
-  const addResponse = (text: string, buttons?: string[]) => {
-    responses.push({ text, buttons });
+  const addResponse = (text: string, buttons?: string[], imageUrl?: string) => {
+    responses.push({ text, buttons, ...(imageUrl ? { imageUrl } : {}) });
   };
 
   const t = session.language ? TRANSLATIONS[session.language] : TRANSLATIONS.en;
@@ -418,13 +423,29 @@ export async function handleWhatsAppMessage(
       if (value === 'English' || value === 'മലയാളം') {
         const lang: Language = value === 'English' ? 'en' : 'ml';
         session.language = lang;
-        session.step = 'MAIN_MENU';
+        session.step = 'PACKAGE_CATALOG';
         const langT = TRANSLATIONS[lang];
-        addResponse(`👋 ${langT.welcome}\n${langT.menuHeader}`, (Object.values(langT.options) as string[]).concat([langT.changeLanguage, langT.endSession]));
+        const catalogImageUrl = lang === 'en' ? PACKAGE_CATALOG_IMAGE_EN : PACKAGE_CATALOG_IMAGE_ML;
+        if (catalogImageUrl) {
+          addResponse(langT.packageCatalogBody, [langT.packageCatalogContinue], catalogImageUrl);
+        } else {
+          addResponse(buildPackageCatalogFallback(lang), [langT.packageCatalogContinue]);
+        }
       } else {
         addResponse(t.languageSelectPrompt, ['English', 'മലയാളം']);
       }
       break;
+
+    case 'PACKAGE_CATALOG': {
+      const lang = session.language || 'en';
+      const langT = TRANSLATIONS[lang];
+      session.step = 'MAIN_MENU';
+      addResponse(
+        `👋 ${langT.welcome}\n${langT.menuHeader}`,
+        (Object.values(langT.options) as string[]).concat([langT.changeLanguage, langT.endSession])
+      );
+      break;
+    }
 
     case 'MAIN_MENU':
       if (value === t.options.book) {

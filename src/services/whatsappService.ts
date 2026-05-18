@@ -39,7 +39,7 @@ function assertLabelFits(label: string, limit: number, context: string): string 
   return label;
 }
 
-export async function sendWhatsAppMessage(to: string, message: string, buttons?: string[]) {
+export async function sendWhatsAppMessage(to: string, message: string, buttons?: string[], imageUrl?: string) {
   if (!WHATSAPP_TOKEN || !WHATSAPP_PHONE_ID) {
     console.warn('WhatsApp API credentials missing');
     return;
@@ -50,7 +50,23 @@ export async function sendWhatsAppMessage(to: string, message: string, buttons?:
   try {
     if (buttons && buttons.length > 0) {
       if (buttons.length <= 3) {
-        // Send Button Reply (Limited to 3)
+        // Send Button Reply (Limited to 3), optionally with an image header
+        const interactive: Record<string, unknown> = {
+          type: 'button',
+          body: { text: message },
+          action: {
+            buttons: buttons.map((btn, index) => ({
+              type: 'reply',
+              reply: {
+                id: `btn_${index}`,
+                title: assertLabelFits(btn, 20, `reply button #${index}`)
+              }
+            }))
+          }
+        };
+        if (imageUrl) {
+          interactive.header = { type: 'image', image: { link: imageUrl } };
+        }
         await axios.post(
           url,
           {
@@ -58,19 +74,7 @@ export async function sendWhatsAppMessage(to: string, message: string, buttons?:
             recipient_type: 'individual',
             to: to,
             type: 'interactive',
-            interactive: {
-              type: 'button',
-              body: { text: message },
-              action: {
-                buttons: buttons.map((btn, index) => ({
-                  type: 'reply',
-                  reply: {
-                    id: `btn_${index}`,
-                    title: assertLabelFits(btn, 20, `reply button #${index}`)
-                  }
-                }))
-              }
-            }
+            interactive,
           },
           { headers: { Authorization: `Bearer ${WHATSAPP_TOKEN}` } }
         );

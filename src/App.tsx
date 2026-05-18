@@ -76,6 +76,7 @@ import {
   browserPackagesList,
   cartPackagesList,
   formatPackageDetail,
+  buildPackageCatalogFallback,
 } from './constants';
 import { Booking, BookingStatus, CustomTest, Language, ChatStep, PatientProfile, Staff, StaffRole, BookingConfig, PhlebAvailability, WeeklySchedule, SlotConfig, isBackward, CANCELLABLE_STATUSES, isCancellable, isWithinCustomerActionWindow } from './types';
 import { ConfirmDialog, type ConfirmConfig } from './ui/ConfirmDialog';
@@ -4272,6 +4273,7 @@ interface Message {
   sender: 'user' | 'bot';
   timestamp: Date;
   buttons?: string[];
+  imageUrl?: string;
 }
 
 export function WhatsAppSimulator({ userId }: { userId: string }) {
@@ -4302,6 +4304,8 @@ export function WhatsAppSimulator({ userId }: { userId: string }) {
 
   const t = language ? TRANSLATIONS[language] : TRANSLATIONS['en'];
   const config = useBookingConfig();
+  const catalogImageEn = (import.meta as any).env?.VITE_PACKAGE_CATALOG_IMAGE_EN || '';
+  const catalogImageMl = (import.meta as any).env?.VITE_PACKAGE_CATALOG_IMAGE_ML || '';
 
   const resetSimulator = (quiet = false) => {
     setMessages([]);
@@ -4420,15 +4424,16 @@ export function WhatsAppSimulator({ userId }: { userId: string }) {
     chatEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [messages]);
 
-  const addBotMessage = (text: string, buttons?: string[], forceInputVisible?: boolean) => {
+  const addBotMessage = (text: string, buttons?: string[], forceInputVisible?: boolean, imageUrl?: string) => {
     setMessages(prev => [...prev, {
       id: Math.random().toString(),
       text,
       sender: 'bot',
       timestamp: new Date(),
-      buttons
+      buttons,
+      ...(imageUrl ? { imageUrl } : {}),
     }]);
-    
+
     // Default: hide input if buttons present, unless forceInputVisible is true
     if (forceInputVisible !== undefined) {
       setInputVisible(forceInputVisible);
@@ -4773,8 +4778,13 @@ export function WhatsAppSimulator({ userId }: { userId: string }) {
             const lang: Language = value === 'English' ? 'en' : 'ml';
             setLanguage(lang);
             const langT = TRANSLATIONS[lang];
-            setStep('MAIN_MENU');
-            addBotMessage(`ðŸ‘‹ ${langT.welcome}\n${langT.menuHeader}`, (Object.values(langT.options) as string[]).concat([langT.changeLanguage, langT.endSession]));
+            setStep('PACKAGE_CATALOG');
+            const catalogImageUrl = lang === 'en' ? catalogImageEn : catalogImageMl;
+            if (catalogImageUrl) {
+              addBotMessage(langT.packageCatalogBody, [langT.packageCatalogContinue], false, catalogImageUrl);
+            } else {
+              addBotMessage(buildPackageCatalogFallback(lang), [langT.packageCatalogContinue]);
+            }
           } else {
             // Re-prompt if they typed random text instead of clicking language
             addBotMessage(
@@ -4783,6 +4793,17 @@ export function WhatsAppSimulator({ userId }: { userId: string }) {
             );
           }
           break;
+
+        case 'PACKAGE_CATALOG': {
+          const lang = language || 'en';
+          const langT = TRANSLATIONS[lang];
+          setStep('MAIN_MENU');
+          addBotMessage(
+            `ðŸ‘‹ ${langT.welcome}\n${langT.menuHeader}`,
+            (Object.values(langT.options) as string[]).concat([langT.changeLanguage, langT.endSession])
+          );
+          break;
+        }
 
         case 'MAIN_MENU':
           if (value === t.options.book) {
@@ -5579,10 +5600,18 @@ export function WhatsAppSimulator({ userId }: { userId: string }) {
           {messages.map((m) => (
             <div key={m.id} className={cn("flex flex-col max-w-[85%]", m.sender === 'user' ? "ml-auto items-end" : "mr-auto items-start")}>
               <div className={cn(
-                "p-2.5 rounded-lg text-xs shadow-sm relative",
-                m.sender === 'user' ? "bg-[#DCF8C6]" : "bg-white"
+                "rounded-lg text-xs shadow-sm relative overflow-hidden",
+                m.sender === 'user' ? "bg-[#DCF8C6] p-2.5" : (m.imageUrl ? "bg-white" : "bg-white p-2.5")
               )}>
-                <p className="whitespace-pre-wrap">{m.text}</p>
+                {m.imageUrl && m.sender === 'bot' && (
+                  <img
+                    src={m.imageUrl}
+                    alt="Package catalog"
+                    className="w-full object-cover max-h-64"
+                    onError={(e) => { (e.target as HTMLImageElement).style.display = 'none'; }}
+                  />
+                )}
+                <p className={cn("whitespace-pre-wrap", m.imageUrl && m.sender === 'bot' ? "p-2.5" : "")}>{m.text}</p>
               </div>
               
               {m.buttons && (

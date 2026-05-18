@@ -425,7 +425,10 @@ export async function handleWhatsAppMessage(
         session.language = lang;
         session.step = 'PACKAGE_CATALOG';
         const langT = TRANSLATIONS[lang];
-        const catalogImageUrl = lang === 'en' ? PACKAGE_CATALOG_IMAGE_EN : PACKAGE_CATALOG_IMAGE_ML;
+        const envEn = process.env.PACKAGE_CATALOG_IMAGE_EN || '';
+        const envMl = process.env.PACKAGE_CATALOG_IMAGE_ML || '';
+        const catalogImageUrl = lang === 'en' ? envEn : envMl;
+        console.log('[PACKAGE_CATALOG] lang=', lang, 'envEnSet=', !!envEn, 'envMlSet=', !!envMl, 'urlChosen=', catalogImageUrl ? catalogImageUrl.slice(0, 60) + '...' : '(empty)');
         if (catalogImageUrl) {
           addResponse(langT.packageCatalogBody, [langT.packageCatalogContinue], catalogImageUrl);
         } else {

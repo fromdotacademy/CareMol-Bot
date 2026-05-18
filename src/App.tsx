@@ -77,7 +77,7 @@ import {
   cartPackagesList,
   formatPackageDetail,
 } from './constants';
-import { Booking, BookingStatus, CustomTest, Language, ChatStep, PatientProfile, Staff, StaffRole, BookingConfig, PhlebAvailability, WeeklySchedule, SlotConfig, isBackward, CANCELLABLE_STATUSES, isCancellable } from './types';
+import { Booking, BookingStatus, CustomTest, Language, ChatStep, PatientProfile, Staff, StaffRole, BookingConfig, PhlebAvailability, WeeklySchedule, SlotConfig, isBackward, CANCELLABLE_STATUSES, isCancellable, isWithinCustomerActionWindow } from './types';
 import { ConfirmDialog, type ConfirmConfig } from './ui/ConfirmDialog';
 import { buildBookingConfirmation } from './services/confirmationMessage';
 import { upsertPatientWeb } from './services/patientService';
@@ -4289,6 +4289,17 @@ export function WhatsAppSimulator({ userId }: { userId: string }) {
   const [inputText, setInputText] = useState('');
   const chatEndRef = useRef<HTMLDivElement>(null);
 
+  // My Bookings / cancel / reschedule (mirrors botLogic session fields).
+  const [activeBookingId, setActiveBookingId] = useState<string | null>(null);
+  const [rescheduleDraft, setRescheduleDraft] = useState<{
+    bookingDate: string;
+    slotStart: string;
+    slotEnd: string;
+    timeSlot: string;
+  } | null>(null);
+  const [cancelDraftReason, setCancelDraftReason] = useState<string>('');
+  const [myBookingsCache, setMyBookingsCache] = useState<Array<{ bookingId: string; label: string }>>([]);
+
   const t = language ? TRANSLATIONS[language] : TRANSLATIONS['en'];
   const config = useBookingConfig();
 
@@ -4297,6 +4308,10 @@ export function WhatsAppSimulator({ userId }: { userId: string }) {
     setStep('MAIN_MENU');
     setIsOnlyChecking(false);
     setBookingData({ status: 'Created', testNames: [] });
+    setActiveBookingId(null);
+    setRescheduleDraft(null);
+    setCancelDraftReason('');
+    setMyBookingsCache([]);
     if (!quiet) {
       if (language) {
         const langT = TRANSLATIONS[language];
@@ -4508,6 +4523,124 @@ export function WhatsAppSimulator({ userId }: { userId: string }) {
     }]);
   };
 
+  // ─────────────────────────────────────────────────────────────────────────
+  // My Bookings / cancel / reschedule — simulator mirror of botLogic.ts.
+  //
+  // PRODUCTION write path: the WhatsApp webhook (server-side) uses the Admin
+  // SDK and bypasses firestore.rules, so customer-driven writes work.
+  //
+  // SIMULATOR write path: the admin running the dashboard is signed in via
+  // the web SDK. firestore.rules' owner-cancel/owner-reschedule clauses
+  // require `existing().userId == request.auth.uid`, but `userId` is the
+  // customer's phone, not the admin's uid — so the writes WOULD fail.
+  //
+  // The simulator therefore renders the conversation UI faithfully but
+  // SKIPS the actual Firestore writes for cancel/reschedule. The success
+  // message is suffixed with "(simulated)" so testers know the booking
+  // was not actually mutated. Use the admin dashboard (Task 4) for real
+  // admin-initiated cancel/reschedule, or the deployed WhatsApp webhook
+  // for customer-initiated cancel/reschedule.
+  // ─────────────────────────────────────────────────────────────────────────
+
+  async function fetchMyBookings(): Promise<Booking[]> {
+    const snap = await getDocs(query(collection(db, 'bookings'), where('userId', '==', userId)));
+    const all = snap.docs.map(d => ({ ...d.data(), bookingId: d.id } as Booking));
+    const thirtyDaysAgo = (() => {
+      const d = new Date();
+      d.setDate(d.getDate() - 30);
+      return d.toISOString().slice(0, 10);
+    })();
+    return all
+      .filter(b => {
+        if (b.status === 'Cancelled') return false;
+        if (b.status !== 'Completed') return true;
+        const refDate = b.bookingDate || (b.createdAt ? String(b.createdAt).slice(0, 10) : '');
+        return refDate >= thirtyDaysAgo;
+      })
+      .sort((a, b) => {
+        const aActive = a.status !== 'Completed';
+        const bActive = b.status !== 'Completed';
+        if (aActive && !bActive) return -1;
+        if (!aActive && bActive) return 1;
+        if (aActive) return (a.bookingDate || '').localeCompare(b.bookingDate || '');
+        return (b.bookingDate || '').localeCompare(a.bookingDate || '');
+      });
+  }
+
+  function formatBookingListLabel(b: Booking, lang: Language): string {
+    const test = (b.testNames && b.testNames[0]) || 'Booking';
+    const date = b.bookingDate ? formatDateLabel(b.bookingDate, lang) : '—';
+    const label = `${test} • ${date} • ${b.status}`;
+    if (label.length <= 24) return label;
+    const tail = ` • ${date} • ${b.status}`;
+    const maxTest = 24 - tail.length;
+    if (maxTest > 1) return `${test.slice(0, maxTest - 1)}…${tail}`;
+    return label.slice(0, 24);
+  }
+
+  async function renderMyBookings(): Promise<void> {
+    const lang = language || 'en';
+    try {
+      const bookings = await fetchMyBookings();
+      if (bookings.length === 0) {
+        setStep('MAIN_MENU');
+        setMyBookingsCache([]);
+        addBotMessage(t.noBookings, [t.backToMainMenu]);
+        return;
+      }
+      const entries = bookings.slice(0, 9).map(b => ({
+        bookingId: b.bookingId,
+        label: formatBookingListLabel(b, lang),
+      }));
+      setMyBookingsCache(entries);
+      addBotMessage(t.myBookingsHeader, [...entries.map(e => e.label), t.backToMainMenu]);
+    } catch (err) {
+      console.error('[Simulator] renderMyBookings failed', err);
+      setStep('MAIN_MENU');
+      addBotMessage(t.noBookings, [t.backToMainMenu]);
+    }
+  }
+
+  async function renderBookingDetail(bookingId: string | null): Promise<void> {
+    const lang = language || 'en';
+    if (!bookingId) {
+      setStep('MY_BOOKINGS_LIST');
+      await renderMyBookings();
+      return;
+    }
+    const snap = await getDoc(doc(db, 'bookings', bookingId));
+    if (!snap.exists()) {
+      setActiveBookingId(null);
+      setStep('MY_BOOKINGS_LIST');
+      addBotMessage(t.noBookings, [t.backToMainMenu]);
+      return;
+    }
+    const booking = { ...(snap.data() as Booking), bookingId: snap.id };
+    const dateLabel = booking.bookingDate ? formatDateLabel(booking.bookingDate, lang) : '—';
+    const detail = t.bookingDetailHeader
+      .replace('{patientName}', booking.patientName || '—')
+      .replace('{testNames}', (booking.testNames || []).join(', '))
+      .replace('{date}', dateLabel)
+      .replace('{slot}', booking.timeSlot || '—')
+      .replace('{status}', booking.status)
+      .replace('{address}', booking.patientAddress || '—');
+
+    const cancellable = isCancellable(booking);
+    const inWindow = isWithinCustomerActionWindow(booking);
+
+    if (cancellable && inWindow) {
+      addBotMessage(detail, [t.bookingActionCancel, t.bookingActionReschedule, t.bookingActionBack]);
+      return;
+    }
+    if (!cancellable) {
+      addBotMessage(detail, [t.bookingActionBack]);
+      addBotMessage(t.cancelStatusBlocked, [t.bookingActionBack]);
+    } else {
+      addBotMessage(detail, [t.bookingActionBack]);
+      addBotMessage(t.cancelTooLate, [t.bookingActionBack]);
+    }
+  }
+
   const handleAction = async (value: string) => {
     addUserMessage(value);
     
@@ -4535,9 +4668,10 @@ export function WhatsAppSimulator({ userId }: { userId: string }) {
       value === t.options.faq ||
       value === t.options.call ||
       value === t.options.support ||
+      value === t.options.myBookings ||
       value === 'Back to Menu' ||
       value === 'à´¤à´¿à´°à´¿à´•àµ†' ||
-      ['menu', 'home', 'restart'].includes(normalizedVal);
+      ['menu', 'home', 'restart', 'my bookings', 'bookings'].includes(normalizedVal);
 
     if (isMenuCommand) {
       if (value === t.options.book) {
@@ -4584,6 +4718,12 @@ export function WhatsAppSimulator({ userId }: { userId: string }) {
         window.open(`https://wa.me/${phone}?text=${message}`, '_blank');
         setStep('MAIN_MENU');
         addBotMessage(t.supportResponse, [t.backToMainMenu]);
+        return;
+      }
+
+      if (value === t.options.myBookings || normalizedVal === 'my bookings' || normalizedVal === 'bookings') {
+        setStep('MY_BOOKINGS_LIST');
+        await renderMyBookings();
         return;
       }
 
@@ -4672,6 +4812,9 @@ export function WhatsAppSimulator({ userId }: { userId: string }) {
             const message = encodeURIComponent("Hello CareMol, I need support with my booking.");
             window.open(`https://wa.me/${phone}?text=${message}`, '_blank');
             addBotMessage(t.supportResponse, [t.mainMenu]);
+          } else if (value === t.options.myBookings) {
+            setStep('MY_BOOKINGS_LIST');
+            await renderMyBookings();
           } else if (value === t.changeLanguage) {
             setStep('LANGUAGE_SELECTION');
             addBotMessage(t.selectLabel, ['English', 'à´®à´²à´¯à´¾à´³à´‚']);
@@ -5088,6 +5231,321 @@ export function WhatsAppSimulator({ userId }: { userId: string }) {
             addBotMessage(t.returningHeader, (Object.values(t.options) as string[]).concat([t.changeLanguage, t.endSession]));
           }
           break;
+
+        case 'MY_BOOKINGS_LIST': {
+          const match = myBookingsCache.find(e => e.label === value);
+          if (match) {
+            setActiveBookingId(match.bookingId);
+            setStep('BOOKING_DETAIL');
+            await renderBookingDetail(match.bookingId);
+          } else {
+            // Off-menu input or stale label — re-render the list.
+            await renderMyBookings();
+          }
+          break;
+        }
+
+        case 'BOOKING_DETAIL': {
+          if (value === t.bookingActionBack) {
+            setStep('MY_BOOKINGS_LIST');
+            await renderMyBookings();
+            break;
+          }
+          if (!activeBookingId) {
+            setStep('MY_BOOKINGS_LIST');
+            await renderMyBookings();
+            break;
+          }
+
+          if (value === t.bookingActionCancel) {
+            // Re-check at action time to catch races.
+            const snap = await getDoc(doc(db, 'bookings', activeBookingId));
+            if (!snap.exists()) {
+              setActiveBookingId(null);
+              setStep('MY_BOOKINGS_LIST');
+              await renderMyBookings();
+              break;
+            }
+            const booking = { ...(snap.data() as Booking), bookingId: snap.id };
+            if (!isCancellable(booking)) {
+              addBotMessage(t.cancelStatusBlocked, [t.bookingActionBack]);
+              break;
+            }
+            if (!isWithinCustomerActionWindow(booking)) {
+              addBotMessage(t.cancelTooLate, [t.bookingActionBack]);
+              break;
+            }
+            setStep('BOOKING_CANCEL_REASON');
+            addBotMessage(t.cancelReasonPrompt, [t.bookingActionBack], true);
+            break;
+          }
+
+          if (value === t.bookingActionReschedule) {
+            const snap = await getDoc(doc(db, 'bookings', activeBookingId));
+            if (!snap.exists()) {
+              setActiveBookingId(null);
+              setStep('MY_BOOKINGS_LIST');
+              await renderMyBookings();
+              break;
+            }
+            const booking = { ...(snap.data() as Booking), bookingId: snap.id };
+            if (!booking.bookingDate) {
+              addBotMessage(t.rescheduleLegacyBlocked, [t.bookingActionBack]);
+              break;
+            }
+            if (!isCancellable(booking)) {
+              addBotMessage(t.cancelStatusBlocked, [t.bookingActionBack]);
+              break;
+            }
+            if (!isWithinCustomerActionWindow(booking)) {
+              addBotMessage(t.cancelTooLate, [t.bookingActionBack]);
+              break;
+            }
+            const dates = bookableDates(config);
+            const dateLabels = dates.map(d => formatDateLabel(d, language || 'en'));
+            setStep('BOOKING_RESCHEDULE_DATE');
+            addBotMessage(t.rescheduleDatePrompt, [...dateLabels, t.bookingActionBack]);
+            break;
+          }
+
+          // Anything else → re-render detail.
+          await renderBookingDetail(activeBookingId);
+          break;
+        }
+
+        case 'BOOKING_CANCEL_REASON': {
+          if (value === t.bookingActionBack) {
+            setStep('BOOKING_DETAIL');
+            await renderBookingDetail(activeBookingId);
+            break;
+          }
+          const reason = (normalizedVal === 'skip' || value === t.cancelReasonSkip) ? '' : value.trim();
+          setCancelDraftReason(reason);
+          if (!activeBookingId) {
+            setStep('MY_BOOKINGS_LIST');
+            await renderMyBookings();
+            break;
+          }
+          const snap = await getDoc(doc(db, 'bookings', activeBookingId));
+          if (!snap.exists()) {
+            setActiveBookingId(null);
+            setStep('MY_BOOKINGS_LIST');
+            await renderMyBookings();
+            break;
+          }
+          const booking = { ...(snap.data() as Booking), bookingId: snap.id };
+          const lang = language || 'en';
+          const dateLabel = booking.bookingDate ? formatDateLabel(booking.bookingDate, lang) : '—';
+          const prompt = t.cancelConfirmPrompt
+            .replace('{patientName}', booking.patientName || '—')
+            .replace('{date}', dateLabel)
+            .replace('{slot}', booking.timeSlot || '—');
+          setStep('BOOKING_CANCEL_CONFIRM');
+          addBotMessage(prompt, [t.cancelConfirmYes, t.cancelConfirmNo]);
+          break;
+        }
+
+        case 'BOOKING_CANCEL_CONFIRM': {
+          if (value === t.cancelConfirmNo) {
+            setCancelDraftReason('');
+            setStep('BOOKING_DETAIL');
+            await renderBookingDetail(activeBookingId);
+            break;
+          }
+          if (value === t.cancelConfirmYes) {
+            if (!activeBookingId) {
+              setStep('MY_BOOKINGS_LIST');
+              await renderMyBookings();
+              break;
+            }
+            const snap = await getDoc(doc(db, 'bookings', activeBookingId));
+            if (!snap.exists()) {
+              setActiveBookingId(null);
+              setStep('MY_BOOKINGS_LIST');
+              await renderMyBookings();
+              break;
+            }
+            const booking = { ...(snap.data() as Booking), bookingId: snap.id };
+            if (!isCancellable(booking)) {
+              setStep('BOOKING_DETAIL');
+              addBotMessage(t.cancelStatusBlocked, [t.bookingActionBack]);
+              break;
+            }
+            if (!isWithinCustomerActionWindow(booking)) {
+              setStep('BOOKING_DETAIL');
+              addBotMessage(t.cancelTooLate, [t.bookingActionBack]);
+              break;
+            }
+            // Simulator: skip the actual write (rules block customer-style updates
+            // from the admin's auth context). See the divergence comment above.
+            console.warn('[Simulator] Cancel write SKIPPED — production webhook performs this via Admin SDK.');
+            setActiveBookingId(null);
+            setCancelDraftReason('');
+            setStep('MAIN_MENU');
+            addBotMessage(`${t.cancelSuccess}\n\n_(simulated — see CLAUDE.md)_`, [t.backToMainMenu]);
+            break;
+          }
+          // Anything else → re-prompt with same confirm message.
+          if (activeBookingId) {
+            const snap = await getDoc(doc(db, 'bookings', activeBookingId));
+            if (snap.exists()) {
+              const booking = { ...(snap.data() as Booking), bookingId: snap.id };
+              const lang = language || 'en';
+              const dateLabel = booking.bookingDate ? formatDateLabel(booking.bookingDate, lang) : '—';
+              const prompt = t.cancelConfirmPrompt
+                .replace('{patientName}', booking.patientName || '—')
+                .replace('{date}', dateLabel)
+                .replace('{slot}', booking.timeSlot || '—');
+              addBotMessage(prompt, [t.cancelConfirmYes, t.cancelConfirmNo]);
+            }
+          }
+          break;
+        }
+
+        case 'BOOKING_RESCHEDULE_DATE': {
+          if (value === t.bookingActionBack) {
+            setStep('BOOKING_DETAIL');
+            await renderBookingDetail(activeBookingId);
+            break;
+          }
+          const dates = bookableDates(config);
+          const dateLabels = dates.map(d => formatDateLabel(d, language || 'en'));
+          const idx = dateLabels.indexOf(value);
+          if (idx >= 0) {
+            const chosenDate = dates[idx];
+            setRescheduleDraft({
+              bookingDate: chosenDate,
+              slotStart: '',
+              slotEnd: '',
+              timeSlot: '',
+            });
+            setStep('BOOKING_RESCHEDULE_SLOT');
+            const bookable = filterBookableSlots(slotsForDate(config, chosenDate), chosenDate);
+            const slotLabels = bookable.map(s => formatSlotLabel(s, language || 'en'));
+            addBotMessage(t.rescheduleSlotPrompt, [...slotLabels, t.bookingActionBack]);
+          } else {
+            addBotMessage(t.rescheduleDatePrompt, [...dateLabels, t.bookingActionBack]);
+          }
+          break;
+        }
+
+        case 'BOOKING_RESCHEDULE_SLOT': {
+          if (value === t.bookingActionBack) {
+            const dates = bookableDates(config);
+            const dateLabels = dates.map(d => formatDateLabel(d, language || 'en'));
+            setStep('BOOKING_RESCHEDULE_DATE');
+            addBotMessage(t.rescheduleDatePrompt, [...dateLabels, t.bookingActionBack]);
+            break;
+          }
+          if (!rescheduleDraft || !activeBookingId) {
+            setStep('MY_BOOKINGS_LIST');
+            await renderMyBookings();
+            break;
+          }
+          const chosenDate = rescheduleDraft.bookingDate;
+          const bookable = filterBookableSlots(slotsForDate(config, chosenDate), chosenDate);
+          const slotLabels = bookable.map(s => formatSlotLabel(s, language || 'en'));
+          const idx = slotLabels.indexOf(value);
+          if (idx >= 0) {
+            const slot = bookable[idx];
+            const draft = {
+              bookingDate: chosenDate,
+              slotStart: slot.start,
+              slotEnd: slot.end,
+              timeSlot: value,
+            };
+            setRescheduleDraft(draft);
+            const snap = await getDoc(doc(db, 'bookings', activeBookingId));
+            if (!snap.exists()) {
+              setActiveBookingId(null);
+              setRescheduleDraft(null);
+              setStep('MY_BOOKINGS_LIST');
+              await renderMyBookings();
+              break;
+            }
+            const booking = { ...(snap.data() as Booking), bookingId: snap.id };
+            const lang = language || 'en';
+            const oldDateLabel = booking.bookingDate ? formatDateLabel(booking.bookingDate, lang) : '—';
+            const newDateLabel = formatDateLabel(chosenDate, lang);
+            const prompt = t.rescheduleConfirmPrompt
+              .replace('{oldDate}', oldDateLabel)
+              .replace('{oldSlot}', booking.timeSlot || '—')
+              .replace('{newDate}', newDateLabel)
+              .replace('{newSlot}', value);
+            setStep('BOOKING_RESCHEDULE_CONFIRM');
+            addBotMessage(prompt, [t.rescheduleConfirmYes, t.rescheduleConfirmNo]);
+          } else {
+            addBotMessage(t.rescheduleSlotPrompt, [...slotLabels, t.bookingActionBack]);
+          }
+          break;
+        }
+
+        case 'BOOKING_RESCHEDULE_CONFIRM': {
+          if (value === t.rescheduleConfirmNo) {
+            setRescheduleDraft(null);
+            setStep('BOOKING_DETAIL');
+            await renderBookingDetail(activeBookingId);
+            break;
+          }
+          if (value === t.rescheduleConfirmYes) {
+            if (!activeBookingId || !rescheduleDraft) {
+              setStep('MY_BOOKINGS_LIST');
+              await renderMyBookings();
+              break;
+            }
+            const draft = rescheduleDraft;
+            const snap = await getDoc(doc(db, 'bookings', activeBookingId));
+            if (!snap.exists()) {
+              setActiveBookingId(null);
+              setRescheduleDraft(null);
+              setStep('MY_BOOKINGS_LIST');
+              await renderMyBookings();
+              break;
+            }
+            const booking = { ...(snap.data() as Booking), bookingId: snap.id };
+            if (!isCancellable(booking)) {
+              setStep('BOOKING_DETAIL');
+              addBotMessage(t.cancelStatusBlocked, [t.bookingActionBack]);
+              break;
+            }
+            if (!isWithinCustomerActionWindow(booking)) {
+              setStep('BOOKING_DETAIL');
+              addBotMessage(t.cancelTooLate, [t.bookingActionBack]);
+              break;
+            }
+            // Simulator: skip the actual write (rules block customer-style updates
+            // from the admin's auth context). See the divergence comment above.
+            console.warn('[Simulator] Reschedule write SKIPPED — production webhook performs this via Admin SDK.');
+            const lang = language || 'en';
+            const newDateLabel = formatDateLabel(draft.bookingDate, lang);
+            const newSlotLabel = draft.timeSlot;
+            setActiveBookingId(null);
+            setRescheduleDraft(null);
+            setStep('MAIN_MENU');
+            addBotMessage(
+              `${t.rescheduleSuccess.replace('{newDate}', newDateLabel).replace('{newSlot}', newSlotLabel)}\n\n_(simulated — see CLAUDE.md)_`,
+              [t.backToMainMenu],
+            );
+            break;
+          }
+          // Anything else → re-render the confirm prompt.
+          if (activeBookingId && rescheduleDraft) {
+            const snap = await getDoc(doc(db, 'bookings', activeBookingId));
+            if (snap.exists()) {
+              const booking = { ...(snap.data() as Booking), bookingId: snap.id };
+              const lang = language || 'en';
+              const oldDateLabel = booking.bookingDate ? formatDateLabel(booking.bookingDate, lang) : '—';
+              const newDateLabel = formatDateLabel(rescheduleDraft.bookingDate, lang);
+              const prompt = t.rescheduleConfirmPrompt
+                .replace('{oldDate}', oldDateLabel)
+                .replace('{oldSlot}', booking.timeSlot || '—')
+                .replace('{newDate}', newDateLabel)
+                .replace('{newSlot}', rescheduleDraft.timeSlot);
+              addBotMessage(prompt, [t.rescheduleConfirmYes, t.rescheduleConfirmNo]);
+            }
+          }
+          break;
+        }
       }
     }, 500);
   };

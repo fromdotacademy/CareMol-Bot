@@ -77,7 +77,7 @@ import {
   cartPackagesList,
   formatPackageDetail,
 } from './constants';
-import { Booking, BookingStatus, CustomTest, Language, ChatStep, PatientProfile, Staff, StaffRole, BookingConfig, PhlebAvailability, WeeklySchedule, SlotConfig, isBackward } from './types';
+import { Booking, BookingStatus, CustomTest, Language, ChatStep, PatientProfile, Staff, StaffRole, BookingConfig, PhlebAvailability, WeeklySchedule, SlotConfig, isBackward, CANCELLABLE_STATUSES, isCancellable } from './types';
 import { ConfirmDialog, type ConfirmConfig } from './ui/ConfirmDialog';
 import { buildBookingConfirmation } from './services/confirmationMessage';
 import { upsertPatientWeb } from './services/patientService';
@@ -98,6 +98,8 @@ import {
   slotsForDate,
   filterBookableSlots,
   bookableDates,
+  canPhlebKeepBooking,
+  slotsWithAvailablePhlebs,
 } from './services/slotService';
 
 import { useStaffRole } from './hooks/useStaffRole';
@@ -228,6 +230,16 @@ export function DashboardView({ tab: tabProp, onTabChange, onError }: { tab?: Ad
   const [overrideForBooking, setOverrideForBooking] = useState<Set<string>>(new Set());
   const [newBookingOpen, setNewBookingOpen] = useState(false);
   const [pendingConfirm, setPendingConfirm] = useState<ConfirmConfig | null>(null);
+  // Cancellation dialog state — reason is required, so we can't use pendingConfirm directly.
+  const [cancelDialogFor, setCancelDialogFor] = useState<Booking | null>(null);
+  const [cancelReason, setCancelReason] = useState('');
+  // Reschedule modal state.
+  const [rescheduleFor, setRescheduleFor] = useState<Booking | null>(null);
+  const [rescheduleDate, setRescheduleDate] = useState<string>('');
+  const [rescheduleSlotStart, setRescheduleSlotStart] = useState<string>('');
+  // Today/Tomorrow quick-filter override. When non-null, filteredBookings is
+  // restricted to this single ISO date regardless of the dateFilter toggle.
+  const [dateOverride, setDateOverride] = useState<string | null>(null);
   const config = useBookingConfig();
 
   useEffect(() => {
@@ -313,6 +325,177 @@ export function DashboardView({ tab: tabProp, onTabChange, onError }: { tab?: Ad
     }
   };
 
+  // Best-effort WhatsApp notify after a cancel/reschedule write. Firestore is
+  // the source of truth, so we deliberately swallow HTTP errors.
+  const notifyBot = async (bookingId: string, kind: 'cancelled' | 'rescheduled'): Promise<void> => {
+    try {
+      const idToken = await auth.currentUser?.getIdToken();
+      if (!idToken) return;
+      await fetch('/api/bot/notify', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${idToken}`,
+        },
+        body: JSON.stringify({ bookingId, kind }),
+      });
+    } catch (e) {
+      console.warn('[notify] /api/bot/notify call failed (continuing)', e);
+    }
+  };
+
+  const cancelBooking = async (b: Booking, reason: string) => {
+    try {
+      await updateDoc(doc(db, 'bookings', b.bookingId), {
+        status: 'Cancelled',
+        cancelledBy: auth.currentUser?.uid || 'unknown',
+        cancelledByRole: 'admin',
+        cancelledAt: new Date().toISOString(),
+        cancellationReason: reason.trim(),
+        // Clear any pending phleb request so the row is clean after cancel.
+        cancellationRequested: false,
+        cancellationRequestedBy: null,
+        cancellationRequestedAt: null,
+        cancellationRequestReason: null,
+      });
+      await notifyBot(b.bookingId, 'cancelled');
+    } catch (e: any) {
+      try { handleFirestoreError(e, OperationType.UPDATE, `bookings/${b.bookingId}`); }
+      catch (err: any) { onError(err); }
+    }
+  };
+
+  const requestCancel = (b: Booking) => {
+    setCancelReason('');
+    setCancelDialogFor(b);
+  };
+
+  const confirmCancelFromDialog = async () => {
+    if (!cancelDialogFor) return;
+    if (cancelReason.trim().length === 0) return;
+    const target = cancelDialogFor;
+    const reason = cancelReason;
+    setCancelDialogFor(null);
+    setCancelReason('');
+    await cancelBooking(target, reason);
+  };
+
+  const approvePhlebCancel = async (b: Booking) => {
+    try {
+      await updateDoc(doc(db, 'bookings', b.bookingId), {
+        status: 'Cancelled',
+        cancelledBy: b.cancellationRequestedBy || 'unknown',
+        cancelledByRole: 'phlebotomist',
+        cancelledAt: new Date().toISOString(),
+        cancellationReason: b.cancellationRequestReason || null,
+        cancellationRequested: false,
+        cancellationRequestedBy: null,
+        cancellationRequestedAt: null,
+        cancellationRequestReason: null,
+      });
+      await notifyBot(b.bookingId, 'cancelled');
+    } catch (e: any) {
+      try { handleFirestoreError(e, OperationType.UPDATE, `bookings/${b.bookingId}`); }
+      catch (err: any) { onError(err); }
+    }
+  };
+
+  const rejectPhlebCancel = async (b: Booking) => {
+    try {
+      await updateDoc(doc(db, 'bookings', b.bookingId), {
+        cancellationRequested: false,
+        cancellationRequestedBy: null,
+        cancellationRequestedAt: null,
+        cancellationRequestReason: null,
+      });
+    } catch (e: any) {
+      try { handleFirestoreError(e, OperationType.UPDATE, `bookings/${b.bookingId}`); }
+      catch (err: any) { onError(err); }
+    }
+  };
+
+  const requestApprovePhlebCancel = (b: Booking) => {
+    setPendingConfirm({
+      variant: 'danger',
+      title: 'Cancel this booking on behalf of phleb?',
+      body: (
+        <>
+          The phlebotomist has requested cancellation: <i>{b.cancellationRequestReason || 'no reason given'}</i>.
+          Cancelling will notify the customer over WhatsApp. Continue?
+        </>
+      ),
+      confirmLabel: 'Approve & cancel',
+      onConfirm: () => approvePhlebCancel(b),
+    });
+  };
+
+  const requestRejectPhlebCancel = (b: Booking) => {
+    setPendingConfirm({
+      title: 'Reject this cancellation request?',
+      body: <>The phleb&rsquo;s cancellation request will be cleared and the booking stays active.</>,
+      confirmLabel: 'Reject request',
+      onConfirm: () => rejectPhlebCancel(b),
+    });
+  };
+
+  const rescheduleBooking = async (b: Booking, newDate: string, newSlot: SlotConfig) => {
+    try {
+      const keepPhleb = canPhlebKeepBooking(
+        b.bookingId,
+        b.assignedTo,
+        newDate,
+        newSlot.start,
+        phlebotomists,
+        phlebAvailMap,
+        bookings,
+      );
+      const patch: any = {
+        bookingDate: newDate,
+        slotStart: newSlot.start,
+        slotEnd: newSlot.end,
+        timeSlot: formatSlotLabel(newSlot, 'en'),
+        rescheduledAt: new Date().toISOString(),
+        rescheduledBy: auth.currentUser?.uid || 'unknown',
+        rescheduledByRole: 'admin',
+        previousBookingDate: b.bookingDate ?? null,
+        previousSlotStart: b.slotStart ?? null,
+        previousSlotEnd: b.slotEnd ?? null,
+        previousTimeSlot: b.timeSlot ?? null,
+      };
+      if (!keepPhleb && b.assignedTo) {
+        patch.assignedTo = null;
+        patch.assignedToName = null;
+        patch.status = 'Created';
+      }
+      await updateDoc(doc(db, 'bookings', b.bookingId), patch);
+      await notifyBot(b.bookingId, 'rescheduled');
+    } catch (e: any) {
+      try { handleFirestoreError(e, OperationType.UPDATE, `bookings/${b.bookingId}`); }
+      catch (err: any) { onError(err); }
+    }
+  };
+
+  const openReschedule = (b: Booking) => {
+    // Pre-select current date if still bookable, otherwise leave empty.
+    const window = getNextNDates(Math.max(1, config.maxAdvanceDays));
+    const preDate = b.bookingDate && window.includes(b.bookingDate) ? b.bookingDate : '';
+    setRescheduleDate(preDate);
+    setRescheduleSlotStart('');
+    setRescheduleFor(b);
+  };
+
+  const confirmRescheduleFromModal = async () => {
+    if (!rescheduleFor || !rescheduleDate || !rescheduleSlotStart) return;
+    const slots = slotsForDate(config, rescheduleDate);
+    const slot = slots.find(s => s.start === rescheduleSlotStart);
+    if (!slot) return;
+    const target = rescheduleFor;
+    setRescheduleFor(null);
+    setRescheduleDate('');
+    setRescheduleSlotStart('');
+    await rescheduleBooking(target, rescheduleDate, slot);
+  };
+
   const setPriority = async (b: Booking, priority: 'high' | 'medium' | 'low' | '') => {
     try {
       await updateDoc(doc(db, 'bookings', b.bookingId), {
@@ -354,6 +537,8 @@ export function DashboardView({ tab: tabProp, onTabChange, onError }: { tab?: Ad
     const futureWindow = getNextNDates(Math.max(1, config.maxAdvanceDays));
     const upperBound = futureWindow[futureWindow.length - 1];
     const dateFiltered = bookings.filter(b => {
+      // dateOverride wins — narrowest filter.
+      if (dateOverride) return b.bookingDate === dateOverride;
       if (dateFilter === 'all') return true;
       if (!b.bookingDate) return true; // legacy — keep visible
       return b.bookingDate >= today && b.bookingDate <= upperBound;
@@ -375,7 +560,24 @@ export function DashboardView({ tab: tabProp, onTabChange, onError }: { tab?: Ad
       if (b.bookingDate) return 1;
       return String(b.createdAt || '').localeCompare(String(a.createdAt || ''));
     });
-  }, [bookings, filter, searchTerm, dateFilter, config.maxAdvanceDays]);
+  }, [bookings, filter, searchTerm, dateFilter, config.maxAdvanceDays, dateOverride]);
+
+  // Today/Tomorrow counts for the quick-filter cards. Excludes Cancelled so
+  // operators see actionable work; click on the card filters the table down.
+  const todayISO = getISTToday();
+  const tomorrowISO = useMemo(() => getNextNDates(2)[1], []);
+
+  const dateOverrideCounts = useMemo(() => {
+    const result: Record<string, { total: number; unassigned: number }> = {};
+    for (const iso of [todayISO, tomorrowISO]) {
+      const onDate = bookings.filter(b => b.bookingDate === iso && b.status !== 'Cancelled');
+      result[iso] = {
+        total: onDate.length,
+        unassigned: onDate.filter(b => !b.assignedTo && b.status === 'Created').length,
+      };
+    }
+    return result;
+  }, [bookings, todayISO, tomorrowISO]);
 
   // Per-booking availability resolver. Returns the list of phlebs eligible to
   // be assigned and the reason (so the row can render an appropriate hint).
@@ -573,6 +775,56 @@ export function DashboardView({ tab: tabProp, onTabChange, onError }: { tab?: Ad
         <StatCard title="Completed Today" value={stats.completed} icon={<CheckCircle2 className="w-5 h-5 text-green-500" />} />
       </div>
 
+      {/* Today / Tomorrow quick-filter cards. Distinct outline + "View →" makes
+          it clear these are filters not stats. Cancelled bookings are excluded
+          from the counts. */}
+      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 sm:gap-4">
+        {[
+          { iso: todayISO, label: 'Today' },
+          { iso: tomorrowISO, label: 'Tomorrow' },
+        ].map(({ iso, label }) => {
+          const counts = dateOverrideCounts[iso] ?? { total: 0, unassigned: 0 };
+          const active = dateOverride === iso;
+          return (
+            <button
+              key={iso}
+              onClick={() => {
+                setDateOverride(prev => prev === iso ? null : iso);
+                setTab('bookings');
+              }}
+              className={cn(
+                "text-left bg-[var(--color-surface)] border rounded-[var(--radius-lg)] p-4 transition-colors group",
+                active
+                  ? "border-[var(--color-accent)] ring-2 ring-[var(--color-accent)]/20"
+                  : "border-dashed border-[var(--color-border-strong)] hover:border-[var(--color-accent)] hover:bg-[var(--color-sunken)]"
+              )}
+            >
+              <div className="flex items-center justify-between gap-2 mb-2">
+                <div className="text-sm font-medium tracking-tight text-[var(--color-text-secondary)] uppercase">
+                  {label} · {formatDateLabel(iso, 'en')}
+                </div>
+                <div className="text-xs font-semibold text-[var(--color-accent)] group-hover:underline">
+                  {active ? 'Filtering →' : 'View →'}
+                </div>
+              </div>
+              <div className="flex items-end gap-4">
+                <div>
+                  <div className="text-3xl font-bold tracking-tight text-[var(--color-text-primary)]">{counts.total}</div>
+                  <div className="text-xs text-[var(--color-text-tertiary)] mt-0.5">bookings</div>
+                </div>
+                {counts.unassigned > 0 && (
+                  <div>
+                    <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-bold bg-rose-100 text-rose-700">
+                      {counts.unassigned} unassigned
+                    </span>
+                  </div>
+                )}
+              </div>
+            </button>
+          );
+        })}
+      </div>
+
       {/* Primary action — only shown when used standalone (legacy mode, no tabProp). */}
       {tabProp === undefined && (
         <div className="flex items-center justify-end">
@@ -648,7 +900,17 @@ export function DashboardView({ tab: tabProp, onTabChange, onError }: { tab?: Ad
           </div>
 
           <div className="flex items-center gap-1.5 flex-wrap md:flex-nowrap md:overflow-x-auto pb-1 md:pb-0 scrollbar-none">
-            {['All', 'Created', 'Assigned', 'Collected', 'Processing', 'Completed'].map(s => (
+            {dateOverride && (
+              <button
+                onClick={() => setDateOverride(null)}
+                className="inline-flex items-center gap-1.5 h-10 sm:h-9 px-3 text-sm font-medium tracking-tight rounded-[var(--radius-sm)] border border-[var(--color-accent)] bg-[var(--color-accent)]/10 text-[var(--color-accent)] hover:bg-[var(--color-accent)]/20 whitespace-nowrap"
+                title="Clear date filter"
+              >
+                <X className="w-3.5 h-3.5" />
+                Showing {dateOverride === todayISO ? 'Today' : dateOverride === tomorrowISO ? 'Tomorrow' : formatDateLabel(dateOverride, 'en')} only
+              </button>
+            )}
+            {['All', 'Created', 'Assigned', 'Collected', 'Processing', 'Completed', 'Cancelled'].map(s => (
               <button
                 key={s}
                 onClick={() => setFilter(s as any)}
@@ -693,7 +955,48 @@ export function DashboardView({ tab: tabProp, onTabChange, onError }: { tab?: Ad
             </thead>
             <tbody className="divide-y divide-border-subtle">
               {filteredBookings.length > 0 ? filteredBookings.map(b => (
-                <tr key={b.bookingId} className="group hover:bg-primary/5 transition-colors">
+                <React.Fragment key={b.bookingId}>
+                  {b.cancellationRequested && b.status !== 'Cancelled' && (
+                    <tr className="bg-rose-50/60">
+                      <td colSpan={5} className="px-4 sm:px-5 py-3 border-b border-rose-200/60">
+                        <div className="flex items-start justify-between gap-3 flex-wrap">
+                          <div className="flex items-start gap-2 min-w-0">
+                            <AlertTriangle className="w-4 h-4 text-rose-600 mt-0.5 shrink-0" />
+                            <div className="min-w-0">
+                              <div className="text-sm font-bold text-rose-700">
+                                Phlebotomist requested cancellation
+                              </div>
+                              <div className="text-xs text-rose-700/90 mt-0.5">
+                                <span className="font-medium">Reason:</span> {b.cancellationRequestReason || 'No reason given'}
+                              </div>
+                              <div className="text-xs text-rose-700/70 mt-0.5">
+                                Requested by: {
+                                  staff.find(s => s.uid === b.cancellationRequestedBy)?.name
+                                  || b.cancellationRequestedBy
+                                  || 'unknown'
+                                }
+                              </div>
+                            </div>
+                          </div>
+                          <div className="flex items-center gap-2 shrink-0">
+                            <button
+                              onClick={() => requestApprovePhlebCancel(b)}
+                              className="px-3 py-1.5 text-xs font-bold uppercase tracking-wider rounded-md bg-rose-600 text-white hover:bg-rose-700 transition-colors"
+                            >
+                              Approve
+                            </button>
+                            <button
+                              onClick={() => requestRejectPhlebCancel(b)}
+                              className="px-3 py-1.5 text-xs font-bold uppercase tracking-wider rounded-md bg-white text-rose-700 border border-rose-300 hover:bg-rose-100 transition-colors"
+                            >
+                              Reject
+                            </button>
+                          </div>
+                        </div>
+                      </td>
+                    </tr>
+                  )}
+                <tr className="group hover:bg-primary/5 transition-colors">
                   <td className="py-4 px-6">
                     <div className="flex items-center gap-3">
                       <div className="w-9 h-9 rounded-full bg-slate-100 flex items-center justify-center border border-border-subtle group-hover:bg-white transition-colors">
@@ -792,6 +1095,7 @@ export function DashboardView({ tab: tabProp, onTabChange, onError }: { tab?: Ad
                         <option value="Collected">Collected</option>
                         <option value="Processing">Processing</option>
                         <option value="Completed">Completed</option>
+                        {b.status === 'Cancelled' && <option value="Cancelled">Cancelled</option>}
                       </select>
                       {b.status === 'Created' && b.assignedTo && (
                         <button
@@ -887,6 +1191,24 @@ export function DashboardView({ tab: tabProp, onTabChange, onError }: { tab?: Ad
                       >
                         Edit Tests
                       </button>
+                      {isCancellable(b) && (
+                        <>
+                          <button
+                            title="Reschedule"
+                            onClick={() => openReschedule(b)}
+                            className="p-1 px-2 text-sm bg-slate-100 text-text-dark rounded hover:bg-primary hover:text-white transition-all font-bold uppercase"
+                          >
+                            Reschedule
+                          </button>
+                          <button
+                            title="Cancel booking"
+                            onClick={() => requestCancel(b)}
+                            className="p-1 px-2 text-sm bg-rose-50 text-rose-700 rounded hover:bg-rose-600 hover:text-white transition-all font-bold uppercase"
+                          >
+                            Cancel
+                          </button>
+                        </>
+                      )}
                       {b.status === 'Processing' && (
                         <button
                           onClick={() => requestStatusChange(b, 'Completed')}
@@ -904,6 +1226,7 @@ export function DashboardView({ tab: tabProp, onTabChange, onError }: { tab?: Ad
                     </div>
                   </td>
                 </tr>
+                </React.Fragment>
               )) : (
                 <tr>
                   <td colSpan={4} className="py-20 text-center">
@@ -927,6 +1250,44 @@ export function DashboardView({ tab: tabProp, onTabChange, onError }: { tab?: Ad
             </div>
           ) : filteredBookings.map(b => (
             <MobileListCard key={b.bookingId}>
+              {/* Phleb cancellation-request banner */}
+              {b.cancellationRequested && b.status !== 'Cancelled' && (
+                <div className="bg-rose-50 border border-rose-200 rounded-md p-3 -m-1 mb-1">
+                  <div className="flex items-start gap-2">
+                    <AlertTriangle className="w-4 h-4 text-rose-600 mt-0.5 shrink-0" />
+                    <div className="min-w-0 flex-1">
+                      <div className="text-sm font-bold text-rose-700">
+                        Phleb requested cancellation
+                      </div>
+                      <div className="text-xs text-rose-700/90 mt-0.5">
+                        <span className="font-medium">Reason:</span> {b.cancellationRequestReason || 'No reason given'}
+                      </div>
+                      <div className="text-xs text-rose-700/70 mt-0.5">
+                        By: {
+                          staff.find(s => s.uid === b.cancellationRequestedBy)?.name
+                          || b.cancellationRequestedBy
+                          || 'unknown'
+                        }
+                      </div>
+                      <div className="flex items-center gap-2 mt-2">
+                        <button
+                          onClick={() => requestApprovePhlebCancel(b)}
+                          className="px-3 py-1.5 text-xs font-bold uppercase tracking-wider rounded-md bg-rose-600 text-white hover:bg-rose-700 transition-colors"
+                        >
+                          Approve
+                        </button>
+                        <button
+                          onClick={() => requestRejectPhlebCancel(b)}
+                          className="px-3 py-1.5 text-xs font-bold uppercase tracking-wider rounded-md bg-white text-rose-700 border border-rose-300 hover:bg-rose-100 transition-colors"
+                        >
+                          Reject
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              )}
+
               {/* Header: name + status */}
               <div className="flex items-start justify-between gap-3">
                 <div className="min-w-0 flex-1">
@@ -958,6 +1319,7 @@ export function DashboardView({ tab: tabProp, onTabChange, onError }: { tab?: Ad
                   <option value="Collected">Collected</option>
                   <option value="Processing">Processing</option>
                   <option value="Completed">Completed</option>
+                  {b.status === 'Cancelled' && <option value="Cancelled">Cancelled</option>}
                 </select>
               </div>
               {b.status === 'Created' && b.assignedTo && (
@@ -1106,6 +1468,22 @@ export function DashboardView({ tab: tabProp, onTabChange, onError }: { tab?: Ad
                   Edit Tests
                 </button>
               </div>
+              {isCancellable(b) && (
+                <div className="flex items-center gap-2 pt-2 border-t border-[var(--color-border-subtle)]">
+                  <button
+                    onClick={() => openReschedule(b)}
+                    className="flex-1 inline-flex items-center justify-center gap-1.5 py-2.5 text-xs font-bold uppercase tracking-wider rounded-lg bg-slate-100 text-text-dark hover:bg-primary hover:text-white transition-colors"
+                  >
+                    <Calendar className="w-4 h-4" /> Reschedule
+                  </button>
+                  <button
+                    onClick={() => requestCancel(b)}
+                    className="flex-1 inline-flex items-center justify-center gap-1.5 py-2.5 text-xs font-bold uppercase tracking-wider rounded-lg bg-rose-50 text-rose-700 hover:bg-rose-600 hover:text-white transition-colors"
+                  >
+                    <X className="w-4 h-4" /> Cancel
+                  </button>
+                </div>
+              )}
               {b.status === 'Processing' && (
                 <button
                   onClick={() => requestStatusChange(b, 'Completed')}
@@ -1140,6 +1518,227 @@ export function DashboardView({ tab: tabProp, onTabChange, onError }: { tab?: Ad
           onClose={() => setNewBookingOpen(false)}
         />
       )}
+
+      {/* Cancel dialog — admin must provide a non-empty reason. */}
+      {cancelDialogFor && (
+        <div
+          className="fixed inset-0 z-50 bg-slate-900/60 flex items-end sm:items-center justify-center p-3 sm:p-6"
+          onClick={() => { setCancelDialogFor(null); setCancelReason(''); }}
+        >
+          <div
+            className="bg-white rounded-2xl w-full max-w-md shadow-2xl border border-slate-200"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="p-5 border-b border-slate-200">
+              <div className="flex items-start gap-3">
+                <div className="w-9 h-9 rounded-full bg-rose-100 flex items-center justify-center shrink-0">
+                  <AlertTriangle className="w-5 h-5 text-rose-600" />
+                </div>
+                <div className="min-w-0 flex-1">
+                  <h3 className="text-base font-bold text-slate-900">Cancel this booking?</h3>
+                  <p className="text-sm text-slate-600 mt-0.5">
+                    <span className="font-medium">{cancelDialogFor.patientName}</span>
+                    {cancelDialogFor.bookingDate ? (
+                      <> · {formatDateLabel(cancelDialogFor.bookingDate, 'en')}</>
+                    ) : null}
+                    {cancelDialogFor.timeSlot ? <> · {cancelDialogFor.timeSlot}</> : null}
+                  </p>
+                </div>
+              </div>
+            </div>
+            <div className="p-5 space-y-3">
+              <label className="block text-sm font-medium text-slate-700">
+                Cancellation reason <span className="text-rose-600">*</span>
+              </label>
+              <textarea
+                value={cancelReason}
+                onChange={(e) => setCancelReason(e.target.value)}
+                placeholder="Why are you cancelling?"
+                rows={3}
+                className="w-full text-sm rounded-md border border-slate-300 px-3 py-2 outline-none focus:border-[var(--color-accent)] resize-none"
+                autoFocus
+              />
+              <p className="text-xs text-slate-500">
+                The customer will be notified over WhatsApp.
+              </p>
+            </div>
+            <div className="px-5 py-4 border-t border-slate-200 flex items-center justify-end gap-2">
+              <button
+                onClick={() => { setCancelDialogFor(null); setCancelReason(''); }}
+                className="px-4 py-2 text-sm font-medium rounded-md text-slate-700 hover:bg-slate-100 transition-colors"
+              >
+                Close
+              </button>
+              <button
+                onClick={confirmCancelFromDialog}
+                disabled={cancelReason.trim().length === 0}
+                className={cn(
+                  "px-4 py-2 text-sm font-bold rounded-md transition-colors",
+                  cancelReason.trim().length === 0
+                    ? "bg-slate-200 text-slate-400 cursor-not-allowed"
+                    : "bg-rose-600 text-white hover:bg-rose-700"
+                )}
+              >
+                Confirm Cancel
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Reschedule modal — date + slot picker with phleb-availability hints. */}
+      {rescheduleFor && (() => {
+        const slots = rescheduleDate ? slotsForDate(config, rescheduleDate) : [];
+        const annotated = rescheduleDate
+          ? slotsWithAvailablePhlebs(rescheduleDate, slots, phlebotomists, phlebAvailMap, bookings)
+          : [];
+        const chosenSlot = rescheduleSlotStart ? slots.find(s => s.start === rescheduleSlotStart) || null : null;
+        const keepPhleb = chosenSlot
+          ? canPhlebKeepBooking(
+              rescheduleFor.bookingId,
+              rescheduleFor.assignedTo,
+              rescheduleDate,
+              chosenSlot.start,
+              phlebotomists,
+              phlebAvailMap,
+              bookings,
+            )
+          : false;
+        const availableDates = getNextNDates(Math.max(1, config.maxAdvanceDays));
+        const canConfirm = !!rescheduleDate && !!rescheduleSlotStart;
+        return (
+          <div
+            className="fixed inset-0 z-50 bg-slate-900/60 flex items-end sm:items-center justify-center p-3 sm:p-6"
+            onClick={() => { setRescheduleFor(null); setRescheduleDate(''); setRescheduleSlotStart(''); }}
+          >
+            <div
+              className="bg-white rounded-2xl w-full max-w-xl shadow-2xl border border-slate-200 max-h-[90vh] flex flex-col"
+              onClick={(e) => e.stopPropagation()}
+            >
+              <div className="p-5 border-b border-slate-200 flex items-start justify-between gap-3">
+                <div className="min-w-0">
+                  <h3 className="text-base font-bold text-slate-900">Reschedule booking</h3>
+                  <p className="text-sm text-slate-600 mt-0.5 truncate">
+                    <span className="font-medium">{rescheduleFor.patientName}</span>
+                    {' · '}
+                    {rescheduleFor.bookingDate
+                      ? <>currently {formatDateLabel(rescheduleFor.bookingDate, 'en')} · {rescheduleFor.timeSlot || '—'}</>
+                      : <>no current date</>}
+                  </p>
+                </div>
+                <button
+                  onClick={() => { setRescheduleFor(null); setRescheduleDate(''); setRescheduleSlotStart(''); }}
+                  className="p-1.5 rounded-md text-slate-500 hover:bg-slate-100"
+                >
+                  <X className="w-4 h-4" />
+                </button>
+              </div>
+
+              <div className="p-5 space-y-5 overflow-auto">
+                {/* Date picker */}
+                <div>
+                  <label className="block text-sm font-medium text-slate-700 mb-2">New date</label>
+                  <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
+                    {availableDates.map(iso => (
+                      <button
+                        key={iso}
+                        onClick={() => { setRescheduleDate(iso); setRescheduleSlotStart(''); }}
+                        className={cn(
+                          "text-left px-3 py-2 rounded-md border text-sm transition-colors",
+                          rescheduleDate === iso
+                            ? "bg-[var(--color-accent)] text-white border-[var(--color-accent)]"
+                            : "bg-white text-slate-700 border-slate-300 hover:border-[var(--color-accent)]"
+                        )}
+                      >
+                        {formatDateLabel(iso, 'en')}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+
+                {/* Slot picker */}
+                <div>
+                  <label className="block text-sm font-medium text-slate-700 mb-2">
+                    New slot {!rescheduleDate && <span className="text-xs font-normal text-slate-500">(pick a date first)</span>}
+                  </label>
+                  {!rescheduleDate ? (
+                    <div className="text-xs text-slate-500 italic">No date selected.</div>
+                  ) : annotated.length === 0 ? (
+                    <div className="text-xs text-amber-700 italic bg-amber-50 px-3 py-2 rounded-md">
+                      No slots configured for this date.
+                    </div>
+                  ) : (
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                      {annotated.map(({ slot, availablePhlebs }) => {
+                        const active = rescheduleSlotStart === slot.start;
+                        const count = availablePhlebs.length;
+                        return (
+                          <button
+                            key={slot.start}
+                            onClick={() => setRescheduleSlotStart(slot.start)}
+                            className={cn(
+                              "text-left px-3 py-2 rounded-md border text-sm transition-colors",
+                              active
+                                ? "bg-[var(--color-accent)] text-white border-[var(--color-accent)]"
+                                : "bg-white text-slate-700 border-slate-300 hover:border-[var(--color-accent)]"
+                            )}
+                          >
+                            <div className="font-medium">{formatSlotLabel(slot, 'en')}</div>
+                            <div className={cn(
+                              "text-xs mt-0.5",
+                              active ? "text-white/90" : count === 0 ? "text-rose-600" : "text-slate-500"
+                            )}>
+                              {count === 0
+                                ? 'No phlebs available — admin override required'
+                                : `${count} phleb${count === 1 ? '' : 's'} free`}
+                            </div>
+                          </button>
+                        );
+                      })}
+                    </div>
+                  )}
+                </div>
+
+                {/* Summary */}
+                {canConfirm && chosenSlot && (
+                  <div className="rounded-md border border-slate-200 bg-slate-50 px-3 py-2.5 text-sm text-slate-700">
+                    Reschedule <b>{rescheduleFor.patientName}</b> from{' '}
+                    <b>{rescheduleFor.bookingDate ? formatDateLabel(rescheduleFor.bookingDate, 'en') : 'no date'}</b>
+                    {rescheduleFor.timeSlot ? <> at <b>{rescheduleFor.timeSlot}</b></> : null}
+                    {' '}to <b>{formatDateLabel(rescheduleDate, 'en')}</b> at <b>{formatSlotLabel(chosenSlot, 'en')}</b>.{' '}
+                    {rescheduleFor.assignedTo
+                      ? (keepPhleb
+                          ? <>Phleb <b>{rescheduleFor.assignedToName}</b> will be kept.</>
+                          : <>Phleb <b>{rescheduleFor.assignedToName}</b> will be <b>unassigned</b> (slot not free for them).</>)
+                      : <>No phleb is currently assigned.</>}
+                  </div>
+                )}
+              </div>
+
+              <div className="px-5 py-4 border-t border-slate-200 flex items-center justify-end gap-2">
+                <button
+                  onClick={() => { setRescheduleFor(null); setRescheduleDate(''); setRescheduleSlotStart(''); }}
+                  className="px-4 py-2 text-sm font-medium rounded-md text-slate-700 hover:bg-slate-100 transition-colors"
+                >
+                  Close
+                </button>
+                <button
+                  onClick={confirmRescheduleFromModal}
+                  disabled={!canConfirm}
+                  className={cn(
+                    "px-4 py-2 text-sm font-bold rounded-md transition-colors",
+                    !canConfirm
+                      ? "bg-slate-200 text-slate-400 cursor-not-allowed"
+                      : "bg-[var(--color-accent)] text-white hover:bg-[var(--color-accent-hover)]"
+                  )}
+                >
+                  Confirm Reschedule
+                </button>
+              </div>
+            </div>
+          </div>
+        );
+      })()}
 
       <ConfirmDialog pending={pendingConfirm} onClose={() => setPendingConfirm(null)} />
     </div>
@@ -3522,6 +4121,7 @@ function getStatusStyle(status: BookingStatus) {
     case 'Collected':  return 'bg-[var(--color-status-collected-bg)] text-[var(--color-status-collected)] ring-1 ring-inset ring-[var(--color-status-collected-ring)]';
     case 'Processing': return 'bg-[var(--color-status-processing-bg)] text-[var(--color-status-processing)] ring-1 ring-inset ring-[var(--color-status-processing-ring)]';
     case 'Completed':  return 'bg-[var(--color-status-completed-bg)] text-[var(--color-status-completed)] ring-1 ring-inset ring-[var(--color-status-completed-ring)]';
+    case 'Cancelled':  return 'bg-rose-50 text-rose-700 ring-1 ring-inset ring-rose-200';
     default:           return 'bg-[var(--color-sunken)] text-[var(--color-text-tertiary)] ring-1 ring-inset ring-[var(--color-border-subtle)]';
   }
 }
